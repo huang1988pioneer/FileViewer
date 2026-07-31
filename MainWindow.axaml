@@ -1,0 +1,55 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="FileViewer.MainWindow"
+        Title="FileViewer" Width="1440" Height="900" MinWidth="1050" MinHeight="680"
+        Background="#FFFFFF">
+  <Window.Styles>
+    <Style Selector="Border.panel"><Setter Property="Background" Value="#F7F9F8"/><Setter Property="BorderBrush" Value="#DDE4E0"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="10"/></Style>
+    <Style Selector="TextBlock.muted"><Setter Property="Foreground" Value="#64716C"/></Style>
+    <Style Selector="TextBlock.caption"><Setter Property="FontSize" Value="12"/><Setter Property="Foreground" Value="#64716C"/></Style>
+    <Style Selector="Button.primary"><Setter Property="Background" Value="#276F50"/><Setter Property="Foreground" Value="White"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+    <Style Selector="ListBoxItem"><Setter Property="Padding" Value="8,6"/><Setter Property="CornerRadius" Value="5"/></Style>
+    <Style Selector="ListBoxItem:selected"><Setter Property="Background" Value="#E1F0E8"/><Setter Property="Foreground" Value="#173C2B"/></Style>
+  </Window.Styles>
+  <Grid RowDefinitions="60,*,28">
+    <Border Background="#F7F9F8" BorderBrush="#DDE4E0" BorderThickness="0,0,0,1" Padding="20,0">
+      <Grid ColumnDefinitions="250,*,Auto" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center"><TextBlock Text="◈" FontSize="25" Foreground="#276F50"/><TextBlock Text="FileViewer" FontWeight="SemiBold" FontSize="18"/></StackPanel>
+        <Border Grid.Column="1" MaxWidth="560" HorizontalAlignment="Center" Background="#FFFFFF" BorderBrush="#DDE4E0" BorderThickness="1" CornerRadius="6" Padding="12,7">
+          <Grid ColumnDefinitions="Auto,*"><TextBlock Text="⌕" FontSize="17" Foreground="#64716C" Margin="0,0,8,0"/><TextBox Grid.Column="1" Background="Transparent" BorderThickness="0" Watermark="搜尋目前資料夾（名稱、類型或內容）" Padding="0"/></Grid>
+        </Border>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"><Button Content="↶" ToolTip.Tip="復原"/><Button Content="⋯" ToolTip.Tip="更多選項"/></StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="236,*,390">
+      <Border Background="#F7F9F8" BorderBrush="#DDE4E0" BorderThickness="0,0,1,0" Padding="14">
+        <Grid RowDefinitions="Auto,Auto,*,Auto">
+          <Button Classes="primary" Content="＋ 開啟檔案或資料夾" Click="OpenFolder_Click" HorizontalAlignment="Stretch"/>
+          <StackPanel Grid.Row="1" Margin="0,22,0,12" Spacing="4">
+            <TextBlock Classes="caption" Text="工作區" Margin="8,0,0,4"/>
+            <ListBox SelectedIndex="0"><ListBoxItem Content="▣  所有檔案"/><ListBoxItem Content="☆  最近使用"/><ListBoxItem Content="▱  我的最愛"/></ListBox>
+          </StackPanel>
+          <StackPanel Grid.Row="2" Spacing="4"><TextBlock Classes="caption" Text="依類型瀏覽" Margin="8,0,0,4"/><ListBox><ListBoxItem Content="▤  文件與文字"/><ListBoxItem Content="▧  圖片"/><ListBoxItem Content="▷  影片"/><ListBoxItem Content="♪  音訊"/><ListBoxItem Content="▤  壓縮檔"/></ListBox></StackPanel>
+          <Border Grid.Row="3" Classes="panel" Padding="12" Margin="0,12,0,0"><StackPanel Spacing="5"><TextBlock Text="儲存空間" FontWeight="SemiBold"/><ProgressBar Value="63" Height="5"/><TextBlock Classes="caption" Text="126 GB / 200 GB 已使用"/></StackPanel></Border>
+        </Grid>
+      </Border>
+
+      <Grid Grid.Column="1" RowDefinitions="54,Auto,*" Margin="22,18,18,18">
+        <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center"><StackPanel Orientation="Horizontal" Spacing="9"><TextBlock Text="文件" FontSize="20" FontWeight="SemiBold"/><TextBlock Classes="muted" Text="›  專案素材" VerticalAlignment="Center"/></StackPanel><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"><Button Content="排序：最近修改"/><Button Content="☷" ToolTip.Tip="清單檢視"/><Button Content="▦" ToolTip.Tip="格狀檢視"/></StackPanel></Grid>
+        <Border Grid.Row="1" Classes="panel" Padding="12,9" Margin="0,0,0,10"><StackPanel Orientation="Horizontal" Spacing="18"><TextBlock Text="全部  14" FontWeight="SemiBold" Foreground="#276F50"/><TextBlock Classes="muted" Text="文件  4"/><TextBlock Classes="muted" Text="影像  5"/><TextBlock Classes="muted" Text="媒體  3"/><TextBlock Classes="muted" Text="壓縮檔  2"/></StackPanel></Border>
+        <Border Grid.Row="2" Classes="panel" Padding="0"><Grid RowDefinitions="40,*"><Border Background="#EDF2EF" CornerRadius="10,10,0,0" Padding="16,0"><Grid ColumnDefinitions="*,110,150,135"><TextBlock Text="名稱" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Grid.Column="1" Text="類型" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Grid.Column="2" Text="修改日期" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Grid.Column="3" Text="大小" FontWeight="SemiBold" VerticalAlignment="Center"/></Grid></Border>
+          <ListBox Grid.Row="1" ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}" SelectionChanged="Files_SelectionChanged" BorderThickness="0"><ListBox.ItemTemplate><DataTemplate><Grid ColumnDefinitions="*,110,150,135" Margin="8,1"><StackPanel Orientation="Horizontal" Spacing="10"><Border Background="{Binding IconBackground}" Width="30" Height="30" CornerRadius="6"><TextBlock Text="{Binding Icon}" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="15"/></Border><StackPanel><TextBlock Text="{Binding Name}" FontWeight="{Binding Weight}"/><TextBlock Classes="caption" Text="{Binding Detail}"/></StackPanel></StackPanel><TextBlock Grid.Column="1" Text="{Binding Type}" VerticalAlignment="Center" Classes="muted"/><TextBlock Grid.Column="2" Text="{Binding Modified}" VerticalAlignment="Center" Classes="muted"/><TextBlock Grid.Column="3" Text="{Binding Size}" VerticalAlignment="Center" Classes="muted"/></Grid></DataTemplate></ListBox.ItemTemplate></ListBox>
+        </Grid></Border>
+      </Grid>
+
+      <Border Grid.Column="2" Background="#FBFCFB" BorderBrush="#DDE4E0" BorderThickness="1,0,0,0" Padding="18">
+        <Grid RowDefinitions="Auto,*,Auto"><StackPanel><TextBlock Classes="caption" Text="預覽"/><TextBlock Text="{Binding SelectedFile.Name}" FontSize="18" FontWeight="SemiBold" Margin="0,5,0,2"/><TextBlock Classes="muted" Text="{Binding SelectedFile.Type}  ·  {Binding SelectedFile.Size}"/></StackPanel>
+          <ScrollViewer Grid.Row="1" Margin="0,18,0,12"><StackPanel Spacing="14"><Border Classes="panel" Height="220" Background="{Binding SelectedFile.PreviewBackground}"><Grid><TextBlock Text="{Binding SelectedFile.PreviewIcon}" FontSize="60" HorizontalAlignment="Center" VerticalAlignment="Center"/><Border Background="#B20E2519" CornerRadius="5" Padding="7,4" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="12"><TextBlock Text="{Binding SelectedFile.PreviewLabel}" Foreground="White" FontSize="12"/></Border></Grid></Border><TextBlock Text="{Binding SelectedFile.Description}" TextWrapping="Wrap" Classes="muted"/><Border Classes="panel" Padding="12" IsVisible="{Binding IsPdfSelected}"><StackPanel Spacing="11"><Grid ColumnDefinitions="*,Auto"><TextBlock Text="PDF 工作站" FontWeight="SemiBold"/><TextBlock Grid.Column="1" Classes="caption" Text="閱讀、轉換與保護"/></Grid><TextBlock Classes="caption" Text="編輯 PDF"/><WrapPanel ItemWidth="112" ItemHeight="35"><Button Content="批量處理" Click="PdfTool_Click"/><Button Content="編輯 PDF" Click="PdfTool_Click"/><Button Content="PDF 分割" Click="PdfTool_Click"/><Button Content="PDF 合併" Click="PdfTool_Click"/><Button Content="PDF 旋轉" Click="PdfTool_Click"/><Button Content="註釋 PDF" Click="PdfTool_Click"/></WrapPanel><TextBlock Classes="caption" Text="PDF 轉換"/><WrapPanel ItemWidth="112" ItemHeight="35"><Button Content="PDF 轉 Word" Click="PdfTool_Click"/><Button Content="PDF 轉 PPT" Click="PdfTool_Click"/><Button Content="PDF 轉 Excel" Click="PdfTool_Click"/><Button Content="PDF 轉 TXT" Click="PdfTool_Click"/><Button Content="PDF 轉 JPG" Click="PdfTool_Click"/><Button Content="PDF 轉 PNG" Click="PdfTool_Click"/></WrapPanel><TextBlock Classes="caption" Text="產生 PDF"/><WrapPanel ItemWidth="112" ItemHeight="35"><Button Content="Word 轉 PDF" Click="PdfTool_Click"/><Button Content="PPT 轉 PDF" Click="PdfTool_Click"/><Button Content="Excel 轉 PDF" Click="PdfTool_Click"/><Button Content="PNG 轉 PDF" Click="PdfTool_Click"/><Button Content="JPG 轉 PDF" Click="PdfTool_Click"/><Button Content="DWG 轉 PDF" Click="PdfTool_Click"/></WrapPanel><TextBlock Classes="caption" Text="PDF 安全與辨識"/><WrapPanel ItemWidth="112" ItemHeight="35"><Button Content="PDF 加密" Click="PdfTool_Click"/><Button Content="PDF 解密" Click="PdfTool_Click"/><Button Content="PDF 簽名" Click="PdfTool_Click"/><Button Content="PDF 壓縮" Click="PdfTool_Click"/><Button Content="OCR 圖片轉文字" Click="PdfTool_Click"/><Button Content="全閱讀模式" Click="PdfTool_Click"/><Button Content="列印" Click="PdfTool_Click"/></WrapPanel><TextBlock Classes="caption" Text="所有轉換會先顯示輸出位置與覆寫確認，避免意外修改原始檔。" TextWrapping="Wrap"/></StackPanel></Border><Border Classes="panel" Padding="12"><Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="Auto,*"><TextBlock Text="位置" Classes="caption"/><TextBlock Grid.Column="1" Text="D:\文件\專案素材" Margin="16,0,0,0"/><TextBlock Grid.Row="1" Text="建立日期" Classes="caption"/><TextBlock Grid.Row="1" Grid.Column="1" Text="2026/07/29 09:42" Margin="16,0,0,0"/><TextBlock Grid.Row="2" Text="標籤" Classes="caption"/><TextBlock Grid.Row="2" Grid.Column="1" Text="專案、待處理" Margin="16,0,0,0"/></Grid></Border></StackPanel></ScrollViewer>
+          <StackPanel Grid.Row="2" Spacing="8"><Button Classes="primary" Content="開啟預覽" Click="Preview_Click"/><Grid ColumnDefinitions="*,*"><Button Content="分享" Margin="0,0,4,0"/><Button Grid.Column="1" Content="更多操作" Margin="4,0,0,0"/></Grid></StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+    <Border Grid.Row="2" Background="#F7F9F8" BorderBrush="#DDE4E0" BorderThickness="0,1,0,0" Padding="18,0"><Grid ColumnDefinitions="*,Auto"><TextBlock Classes="caption" Text="就緒 · 選取檔案以查看快速預覽" VerticalAlignment="Center"/><TextBlock Grid.Column="1" Classes="caption" Text="14 個項目 · 2.4 GB" VerticalAlignment="Center"/></Grid></Border>
+  </Grid>
+</Window>

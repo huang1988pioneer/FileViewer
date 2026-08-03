@@ -15,8 +15,7 @@ public partial class MainWindow : Window
     private void Files_SelectionChanged(object? sender, SelectionChangedEventArgs e) { }
     private async void Preview_Click(object? sender, RoutedEventArgs e)
     {
-        var dialog = new Window { Title = "檔案預覽", Width = 680, Height = 440, Content = new TextBlock { Text = $"{_viewModel.SelectedFile.Name}\n\n{_viewModel.SelectedFile.Description}\n\n完整檔案預覽引擎可依格式載入：PDF、Office、圖片、媒體或壓縮檔。", Margin = new Avalonia.Thickness(32), TextWrapping = Avalonia.Media.TextWrapping.Wrap, FontSize = 16 } };
-        await dialog.ShowDialog(this);
+        await new PreviewWindow(_viewModel.SelectedFile).ShowDialog(this);
     }
     private async void PdfTool_Click(object? sender, RoutedEventArgs e)
     {

@@ -42,7 +42,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
-public sealed record FileItem(string Name, string Type, string Modified, string Size, string Icon, string IconBackground, string PreviewIcon, string PreviewLabel, string Description, FontWeight Weight = default)
+public sealed record FileItem(string Name, string Type, string Modified, string Size, string Icon, string IconBackground, string PreviewIcon, string PreviewLabel, string Description, FontWeight Weight = default, string? FullPath = null)
 {
     public string PreviewBackground => Type.Contains("圖片") ? "#EAF2ED" : Type.Contains("影片") ? "#232C2C" : "#F0F4F1";
     public static FileItem FromPath(string path)
@@ -60,7 +60,7 @@ public sealed record FileItem(string Name, string Type, string Modified, string 
             ".zip" or ".rar" or ".7z" => ("壓縮檔", "▤", "#F4EFD9"),
             _ => ("檔案", "□", "#EAF0EC")
         };
-        return new FileItem(info.Name, type, info.LastWriteTime.ToString("yyyy/MM/dd HH:mm"), FormatSize(info.Length), icon, bg, icon, ext.Trim('.').ToUpperInvariant(), "已從您選取的資料夾載入；可使用對應的預覽或編輯工作區。", FontWeight.Normal);
+        return new FileItem(info.Name, type, info.LastWriteTime.ToString("yyyy/MM/dd HH:mm"), FormatSize(info.Length), icon, bg, icon, ext.Trim('.').ToUpperInvariant(), "已從您選取的資料夾載入；可使用對應的預覽或編輯工作區。", FontWeight.Normal, path);
     }
     private static string FormatSize(long bytes) => bytes < 1024 * 1024 ? $"{bytes / 1024d:0.#} KB" : $"{bytes / 1024d / 1024d:0.#} MB";
 }

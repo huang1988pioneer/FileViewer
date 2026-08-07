@@ -28,8 +28,10 @@ jobs:
             os: macos-latest
             rid: osx-arm64
             asset: osx-arm64
+          # Build Intel Mac on macos-latest (arm64 host, RID cross-compile).
+          # macos-13 runners are scarce and can queue past the job timeout.
           - name: macOS Intel
-            os: macos-13
+            os: macos-latest
             rid: osx-x64
             asset: osx-x64
     steps:

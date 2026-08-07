@@ -18,7 +18,7 @@ FileViewer 是 Windows 優先的整合式檔案工作站：預覽、播放、編
 
 ## Positioning
 
-不用安裝多個程式，在同一個視窗完成預覽、播放、編輯與壓縮。
+不用安裝多個程式，在同一個視窗完成預覽、播放與壓縮操作（FileViewPro 式「一個程式開啟常見檔案」）。
 
 ## Brand Personality
 

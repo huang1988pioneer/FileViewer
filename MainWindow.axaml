@@ -1,0 +1,257 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="FileViewer.MainWindow"
+        Title="FileViewer — 開啟任何檔案"
+        Width="1440" Height="900" MinWidth="1050" MinHeight="680"
+        Background="#FFFFFF"
+        DragDrop.AllowDrop="True">
+  <Window.Styles>
+    <Style Selector="Border.panel"><Setter Property="Background" Value="#F7F9F8"/><Setter Property="BorderBrush" Value="#DDE4E0"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="10"/></Style>
+    <Style Selector="TextBlock.muted"><Setter Property="Foreground" Value="#64716C"/></Style>
+    <Style Selector="TextBlock.caption"><Setter Property="FontSize" Value="12"/><Setter Property="Foreground" Value="#64716C"/></Style>
+    <Style Selector="Button.primary"><Setter Property="Background" Value="#276F50"/><Setter Property="Foreground" Value="White"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+    <Style Selector="Button.tool"><Setter Property="Padding" Value="10,7"/><Setter Property="FontSize" Value="12.5"/></Style>
+    <Style Selector="ListBoxItem"><Setter Property="Padding" Value="8,6"/><Setter Property="CornerRadius" Value="5"/></Style>
+    <Style Selector="ListBoxItem:selected"><Setter Property="Background" Value="#E1F0E8"/><Setter Property="Foreground" Value="#173C2B"/></Style>
+    <Style Selector="ListBox.filter ListBoxItem:selected"><Setter Property="Background" Value="#D5EBE0"/></Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="60,*,28">
+    <!-- Top bar -->
+    <Border Background="#F7F9F8" BorderBrush="#DDE4E0" BorderThickness="0,0,0,1" Padding="20,0">
+      <Grid ColumnDefinitions="250,*,Auto" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <TextBlock Text="◈" FontSize="25" Foreground="#276F50"/>
+          <TextBlock Text="FileViewer" FontWeight="SemiBold" FontSize="18"/>
+        </StackPanel>
+        <Border Grid.Column="1" MaxWidth="560" HorizontalAlignment="Center" Background="#FFFFFF" BorderBrush="#DDE4E0" BorderThickness="1" CornerRadius="6" Padding="12,7">
+          <Grid ColumnDefinitions="Auto,*">
+            <TextBlock Text="⌕" FontSize="17" Foreground="#64716C" Margin="0,0,8,0" VerticalAlignment="Center"/>
+            <TextBox x:Name="SearchBox" Grid.Column="1" Background="Transparent" BorderThickness="0"
+                     Watermark="搜尋目前清單（名稱、類型或路徑）" Padding="0"
+                     Text="{Binding SearchText, Mode=TwoWay}"/>
+          </Grid>
+        </Border>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+          <Button Content="開啟檔案" Click="OpenFiles_Click" ToolTip.Tip="開啟一或多個檔案"/>
+          <Button Content="↻" ToolTip.Tip="重新整理" Click="Refresh_Click"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="236,*,390">
+      <!-- Left nav -->
+      <Border Background="#F7F9F8" BorderBrush="#DDE4E0" BorderThickness="0,0,1,0" Padding="14">
+        <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
+          <Button Classes="primary" Content="＋ 開啟檔案或資料夾" Click="OpenFolder_Click" HorizontalAlignment="Stretch"/>
+          <Button Grid.Row="1" Content="開啟檔案…" Click="OpenFiles_Click" HorizontalAlignment="Stretch" Margin="0,8,0,0"/>
+
+          <StackPanel Grid.Row="2" Margin="0,22,0,12" Spacing="4">
+            <TextBlock Classes="caption" Text="工作區" Margin="8,0,0,4"/>
+            <ListBox x:Name="WorkspaceList" SelectionChanged="Workspace_SelectionChanged" SelectedIndex="0">
+              <ListBoxItem Tag="all" Content="▣  所有檔案"/>
+              <ListBoxItem Tag="recent" Content="☆  最近使用"/>
+            </ListBox>
+          </StackPanel>
+
+          <StackPanel Grid.Row="3" Spacing="4">
+            <TextBlock Classes="caption" Text="依類型瀏覽" Margin="8,0,0,4"/>
+            <ListBox x:Name="TypeFilterList" SelectionChanged="TypeFilter_SelectionChanged" SelectedIndex="0">
+              <ListBoxItem Tag="All" Content="▣  全部類型"/>
+              <ListBoxItem Tag="Document" Content="▤  文件與文字"/>
+              <ListBoxItem Tag="Image" Content="▧  圖片"/>
+              <ListBoxItem Tag="Video" Content="▷  影片與音訊"/>
+              <ListBoxItem Tag="Archive" Content="▤  壓縮檔"/>
+            </ListBox>
+          </StackPanel>
+
+          <Border Grid.Row="4" Classes="panel" Padding="12" Margin="0,12,0,0">
+            <StackPanel Spacing="6">
+              <TextBlock Text="FileViewPro 模式" FontWeight="SemiBold"/>
+              <TextBlock Classes="caption" TextWrapping="Wrap"
+                         Text="一個程式預覽文件、圖片、影音與壓縮檔。拖曳檔案到視窗即可開啟。"/>
+            </StackPanel>
+          </Border>
+        </Grid>
+      </Border>
+
+      <!-- Center list -->
+      <Grid Grid.Column="1" RowDefinitions="54,Auto,*" Margin="22,18,18,18">
+        <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <TextBlock Text="{Binding FolderLabel}" FontSize="20" FontWeight="SemiBold"/>
+            <TextBlock Classes="muted" Text="{Binding Breadcrumb}" VerticalAlignment="Center" MaxWidth="420" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+            <TextBlock Classes="caption" Text="拖曳檔案到此處" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1" Classes="panel" Padding="12,9" Margin="0,0,0,10">
+          <TextBlock Text="{Binding StatsLine}" FontWeight="SemiBold" Foreground="#276F50"/>
+        </Border>
+
+        <Border Grid.Row="2" Classes="panel" Padding="0">
+          <Grid RowDefinitions="40,*">
+            <Border Background="#EDF2EF" CornerRadius="10,10,0,0" Padding="16,0">
+              <Grid ColumnDefinitions="*,110,150,135">
+                <TextBlock Text="名稱" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="類型" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="2" Text="修改日期" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="3" Text="大小" FontWeight="SemiBold" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+            <ListBox x:Name="FileList" Grid.Row="1"
+                     ItemsSource="{Binding Files}"
+                     SelectedItem="{Binding SelectedFile}"
+                     SelectionChanged="Files_SelectionChanged"
+                     DoubleTapped="Files_DoubleTapped"
+                     BorderThickness="0">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid ColumnDefinitions="*,110,150,135" Margin="8,1">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                      <Border Background="{Binding IconBackground}" Width="30" Height="30" CornerRadius="6">
+                        <TextBlock Text="{Binding Icon}" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="15"/>
+                      </Border>
+                      <StackPanel>
+                        <TextBlock Text="{Binding Name}" FontWeight="{Binding Weight}"/>
+                        <TextBlock Classes="caption" Text="{Binding Detail}"/>
+                      </StackPanel>
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding Type}" VerticalAlignment="Center" Classes="muted"/>
+                    <TextBlock Grid.Column="2" Text="{Binding Modified}" VerticalAlignment="Center" Classes="muted"/>
+                    <TextBlock Grid.Column="3" Text="{Binding Size}" VerticalAlignment="Center" Classes="muted"/>
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Grid>
+        </Border>
+      </Grid>
+
+      <!-- Right preview / tools -->
+      <Border Grid.Column="2" Background="#FBFCFB" BorderBrush="#DDE4E0" BorderThickness="1,0,0,0" Padding="18">
+        <Grid RowDefinitions="Auto,*,Auto,Auto">
+          <StackPanel>
+            <TextBlock Classes="caption" Text="預覽"/>
+            <TextBlock Text="{Binding SelectedFile.Name, FallbackValue=未選取}" FontSize="18" FontWeight="SemiBold" Margin="0,5,0,2" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Classes="muted" Text="{Binding SelectionSummary}"/>
+          </StackPanel>
+
+          <!-- Preview fills remaining window height. ClipToBounds=False so native video HWND is stable. -->
+          <Border Grid.Row="1" Classes="panel" Margin="0,14,0,10" Padding="0" ClipToBounds="False"
+                  MinHeight="160" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+            <ContentControl x:Name="PreviewHost"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            VerticalContentAlignment="Stretch"/>
+          </Border>
+
+          <ScrollViewer Grid.Row="2" Margin="0,0,0,10" MaxHeight="220"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="12">
+              <TextBlock Text="{Binding SelectedFile.Description}" TextWrapping="Wrap" Classes="muted"/>
+
+              <!-- PDF tools -->
+              <Border Classes="panel" Padding="12" IsVisible="{Binding IsPdfSelected}">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="PDF 工作站" FontWeight="SemiBold"/>
+                  <TextBlock Classes="caption" Text="閱讀與常用操作"/>
+                  <WrapPanel ItemWidth="118" ItemHeight="36">
+                    <Button Classes="tool" Content="開啟預覽" Click="Preview_Click"/>
+                    <Button Classes="tool" Content="系統開啟" Click="OpenSystem_Click"/>
+                    <Button Classes="tool" Content="複製路徑" Click="CopyPath_Click"/>
+                    <Button Classes="tool" Content="顯示位置" Click="Reveal_Click"/>
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
+
+              <!-- Image tools -->
+              <Border Classes="panel" Padding="12" IsVisible="{Binding IsImageSelected}">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="圖片檢視" FontWeight="SemiBold"/>
+                  <WrapPanel ItemWidth="118" ItemHeight="36">
+                    <Button Classes="tool" Content="放大預覽" Click="Preview_Click"/>
+                    <Button Classes="tool" Content="系統開啟" Click="OpenSystem_Click"/>
+                    <Button Classes="tool" Content="複製路徑" Click="CopyPath_Click"/>
+                    <Button Classes="tool" Content="顯示位置" Click="Reveal_Click"/>
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
+
+              <!-- Media tools -->
+              <Border Classes="panel" Padding="12" IsVisible="{Binding IsMediaSelected}">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="媒體播放" FontWeight="SemiBold"/>
+                  <TextBlock Classes="caption" Text="上方預覽可直接播放；亦可交給系統播放器全螢幕觀看。"/>
+                  <WrapPanel ItemWidth="118" ItemHeight="36">
+                    <Button Classes="tool" Content="放大預覽" Click="Preview_Click"/>
+                    <Button Classes="tool primary" Content="系統播放" Click="OpenSystem_Click"/>
+                    <Button Classes="tool" Content="顯示位置" Click="Reveal_Click"/>
+                    <Button Classes="tool" Content="複製路徑" Click="CopyPath_Click"/>
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
+
+              <!-- Archive tools -->
+              <Border Classes="panel" Padding="12" IsVisible="{Binding IsArchiveSelected}">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="壓縮檔" FontWeight="SemiBold"/>
+                  <WrapPanel ItemWidth="118" ItemHeight="36">
+                    <Button Classes="tool" Content="檢視內容" Click="Preview_Click"/>
+                    <Button Classes="tool" Content="解壓全部" Click="ExtractZip_Click" IsVisible="{Binding IsZipSelected}"/>
+                    <Button Classes="tool" Content="系統開啟" Click="OpenSystem_Click"/>
+                    <Button Classes="tool" Content="顯示位置" Click="Reveal_Click"/>
+                  </WrapPanel>
+                  <TextBlock Classes="caption" Text="目前內建解壓支援 ZIP；RAR／7z 可改用系統關聯程式。" TextWrapping="Wrap"/>
+                </StackPanel>
+              </Border>
+
+              <!-- Document tools -->
+              <Border Classes="panel" Padding="12" IsVisible="{Binding IsDocumentSelected}">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="文件" FontWeight="SemiBold"/>
+                  <WrapPanel ItemWidth="118" ItemHeight="36">
+                    <Button Classes="tool" Content="文字預覽" Click="Preview_Click"/>
+                    <Button Classes="tool" Content="系統開啟" Click="OpenSystem_Click"/>
+                    <Button Classes="tool" Content="複製路徑" Click="CopyPath_Click"/>
+                    <Button Classes="tool" Content="顯示位置" Click="Reveal_Click"/>
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
+
+              <Border Classes="panel" Padding="12">
+                <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="Auto,*">
+                  <TextBlock Text="位置" Classes="caption"/>
+                  <TextBlock Grid.Column="1" Text="{Binding LocationText}" Margin="16,0,0,0" TextWrapping="Wrap"/>
+                  <TextBlock Grid.Row="1" Text="建立日期" Classes="caption" Margin="0,8,0,0"/>
+                  <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding CreatedText}" Margin="16,8,0,0"/>
+                  <TextBlock Grid.Row="2" Text="類型" Classes="caption" Margin="0,8,0,0"/>
+                  <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SelectedFile.Type, FallbackValue=—}" Margin="16,8,0,0"/>
+                </Grid>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+
+          <StackPanel Grid.Row="3" Spacing="8">
+            <Button Classes="primary" Content="開啟預覽視窗" Click="Preview_Click" HorizontalAlignment="Stretch"/>
+            <Grid ColumnDefinitions="*,*">
+              <Button Content="以系統開啟" Click="OpenSystem_Click" Margin="0,0,4,0"/>
+              <Button Grid.Column="1" Content="顯示於資料夾" Click="Reveal_Click" Margin="4,0,0,0"/>
+            </Grid>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2" Background="#F7F9F8" BorderBrush="#DDE4E0" BorderThickness="0,1,0,0" Padding="18,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Classes="caption" Text="{Binding StatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Column="1" Classes="caption" Text="{Binding FooterCount}" VerticalAlignment="Center"/>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

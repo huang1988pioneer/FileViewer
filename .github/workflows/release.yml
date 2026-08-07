@@ -1,0 +1,65 @@
+name: Create release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            rid: win-x64
+            asset: win-x64
+          - name: Linux x64
+            os: ubuntu-latest
+            rid: linux-x64
+            asset: linux-x64
+          - name: macOS Apple Silicon
+            os: macos-latest
+            rid: osx-arm64
+            asset: osx-arm64
+          # Build Intel Mac on macos-latest (arm64 host, RID cross-compile).
+          # macos-13 runners are scarce and can queue past the job timeout.
+          - name: macOS Intel
+            os: macos-latest
+            rid: osx-x64
+            asset: osx-x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Publish self-contained app
+        run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained true -o publish
+      - name: Create archive
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath FileViewer-${{ matrix.asset }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FileViewer-${{ matrix.asset }}
+          path: FileViewer-${{ matrix.asset }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*.zip

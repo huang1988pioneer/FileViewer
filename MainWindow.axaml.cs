@@ -142,7 +142,7 @@ public partial class MainWindow : Window
         var path = _viewModel.SelectedFile?.FullPath;
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
         {
-            _ = Message("請先開啟本機檔案。示範清單沒有實體路徑。");
+            _ = Message("請先選取有本機路徑的檔案。");
             return;
         }
 

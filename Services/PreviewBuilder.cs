@@ -17,7 +17,7 @@ public static class PreviewBuilder
             return Notice("尚未選取檔案。開啟資料夾或檔案後，即可在此預覽。");
 
         if (string.IsNullOrWhiteSpace(file.FullPath) || !File.Exists(file.FullPath))
-            return DemoPreview(file);
+            return Notice("找不到檔案。請開啟本機檔案或資料夾。");
 
         var path = file.FullPath;
         if (FileTypeCatalog.IsImage(path))
@@ -31,42 +31,6 @@ public static class PreviewBuilder
 
         return TextPreview(PreviewReader.Read(path));
     }
-
-    private static Control DemoPreview(FileItem file) => new Border
-    {
-        Background = Brush.Parse(file.PreviewBackground),
-        CornerRadius = new CornerRadius(8),
-        Child = new StackPanel
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Spacing = 10,
-            Children =
-            {
-                new TextBlock
-                {
-                    Text = file.PreviewIcon,
-                    FontSize = 56,
-                    HorizontalAlignment = HorizontalAlignment.Center
-                },
-                new TextBlock
-                {
-                    Text = file.Name,
-                    FontWeight = FontWeight.SemiBold,
-                    HorizontalAlignment = HorizontalAlignment.Center
-                },
-                new TextBlock
-                {
-                    Text = "示範項目：請開啟本機檔案或資料夾以查看真實內容。",
-                    Foreground = Brush.Parse("#64716C"),
-                    TextWrapping = TextWrapping.Wrap,
-                    TextAlignment = TextAlignment.Center,
-                    MaxWidth = 320,
-                    Margin = new Thickness(16, 0)
-                }
-            }
-        }
-    };
 
     private static Control ImagePreview(string path)
     {

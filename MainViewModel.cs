@@ -11,11 +11,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private FileItem? _selectedFile;
     private string _searchText = "";
     private FileCategory _categoryFilter = FileCategory.All;
-    private string _folderLabel = "尚未開啟";
-    private string _breadcrumb = "歡迎使用 FileViewer";
-    private string _statusText = "就緒 · 開啟檔案或資料夾開始瀏覽";
+    private string _folderLabel = "載入中…";
+    private string _breadcrumb = "";
+    private string _statusText = "就緒";
     private string _currentDirectory = "";
-    private bool _showDemo = true;
 
     public ObservableCollection<FileItem> Files { get; } = new();
     public ObservableCollection<string> RecentPaths { get; } = new();
@@ -87,7 +86,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public string LocationText =>
         !string.IsNullOrEmpty(SelectedFile?.FullPath) ? Path.GetDirectoryName(SelectedFile.FullPath) ?? "—"
-        : string.IsNullOrEmpty(_currentDirectory) ? "示範清單" : _currentDirectory;
+        : string.IsNullOrEmpty(_currentDirectory) ? "—" : _currentDirectory;
 
     public string CreatedText => SelectedFile?.Created ?? "—";
 
@@ -102,7 +101,37 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public MainViewModel()
     {
-        LoadDemo();
+        LoadStartupFolder();
+    }
+
+    /// <summary>Open a real user folder on launch (Documents → Desktop → profile).</summary>
+    private void LoadStartupFolder()
+    {
+        foreach (var path in StartupCandidates())
+        {
+            if (Directory.Exists(path))
+            {
+                LoadFolder(path);
+                return;
+            }
+        }
+
+        FolderLabel = "尚未開啟";
+        Breadcrumb = "請開啟本機資料夾或檔案";
+        StatusText = "就緒 · 開啟檔案或資料夾開始瀏覽";
+        _allFiles.Clear();
+        ApplyFilter();
+    }
+
+    private static IEnumerable<string> StartupCandidates()
+    {
+        yield return Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        yield return Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        yield return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var home = Environment.GetEnvironmentVariable("USERPROFILE")
+            ?? Environment.GetEnvironmentVariable("HOME");
+        if (!string.IsNullOrWhiteSpace(home))
+            yield return home;
     }
 
     public void LoadFolder(string path)
@@ -113,7 +142,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        _showDemo = false;
         _currentDirectory = path;
         FolderLabel = new DirectoryInfo(path).Name;
         Breadcrumb = path;
@@ -146,7 +174,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        _showDemo = false;
         var firstDir = Path.GetDirectoryName(list[0]) ?? "";
         _currentDirectory = firstDir;
         FolderLabel = list.Count == 1 ? Path.GetFileName(list[0]) : $"{list.Count} 個檔案";
@@ -197,7 +224,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public void Refresh()
     {
-        if (!string.IsNullOrEmpty(_currentDirectory) && Directory.Exists(_currentDirectory) && !_showDemo)
+        if (!string.IsNullOrEmpty(_currentDirectory) && Directory.Exists(_currentDirectory))
             LoadFolder(_currentDirectory);
     }
 
@@ -241,18 +268,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ArchiveCount));
     }
 
-    private void LoadDemo()
-    {
-        _showDemo = true;
-        _currentDirectory = "";
-        FolderLabel = "示範工作區";
-        Breadcrumb = "專案素材（示範）";
-        _allFiles.Clear();
-        foreach (var item in DemoFiles()) _allFiles.Add(item);
-        ApplyFilter();
-        StatusText = "示範模式 · 開啟本機檔案以使用完整預覽";
-    }
-
     private void RememberRecent(string path)
     {
         var existing = RecentPaths.FirstOrDefault(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
@@ -261,37 +276,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
         while (RecentPaths.Count > 12) RecentPaths.RemoveAt(RecentPaths.Count - 1);
     }
 
-    private static IEnumerable<FileItem> DemoFiles() => new[]
-    {
-        new FileItem("2026 品牌企劃書.pdf", "PDF 文件", "今天 10:24", "4.8 MB", "▤", "#FCE9E7", "PDF", "#B84A42",
-            "包含專案目標、視覺素材方向與發佈時程的提案文件。", FileCategory.Document, FontWeight.SemiBold),
-        new FileItem("產品拍攝_07.jpg", "JPEG 圖片", "今天 09:58", "12.4 MB", "▧", "#E6F0E9", "JPG", "#39755A",
-            "高解析度產品拍攝照片，可直接進入圖片預覽。", FileCategory.Image),
-        new FileItem("訪談逐字稿.docx", "Word 文件", "昨天", "860 KB", "W", "#E8EEF9", "DOCX", "#4169A8",
-            "訪談內容與重點摘錄，支援快速文字預覽。", FileCategory.Document),
-        new FileItem("社群排程.xlsx", "Excel 試算表", "昨天", "1.2 MB", "X", "#E1F1E6", "XLSX", "#2F7C48",
-            "社群內容排程、素材狀態與發佈日期。", FileCategory.Spreadsheet),
-        new FileItem("開場動畫.mp4", "MP4 影片", "7/29", "128.7 MB", "▷", "#E8EAF4", "01:24", "#5A628A",
-            "影片素材，可用系統播放器開啟。", FileCategory.Video),
-        new FileItem("配樂_主題.wav", "WAV 音訊", "7/29", "38.1 MB", "♪", "#F5EAE2", "WAV", "#A5623D",
-            "無損音訊檔案，可用系統播放器播放。", FileCategory.Audio),
-        new FileItem("素材封裝.zip", "ZIP 壓縮檔", "7/28", "210.5 MB", "▤", "#F4EFD9", "ZIP", "#8A742F",
-            "壓縮檔內容可檢視與解壓縮。", FileCategory.Archive),
-        new FileItem("網站文案.txt", "文字檔", "7/27", "24 KB", "T", "#E8EEF0", "TXT", "#557076",
-            "純文字文件，可於內建預覽中開啟。", FileCategory.Document)
-    };
-
     private static string FormatTotalSize(IEnumerable<FileItem> files)
     {
-        // Demo / loaded sizes are display strings; show item count focused footer when unknown.
         var withPath = files.Where(f => !string.IsNullOrEmpty(f.FullPath) && File.Exists(f.FullPath!)).ToList();
-        if (withPath.Count == 0) return "示範";
+        if (withPath.Count == 0) return "0 B";
         long total = 0;
         foreach (var f in withPath)
         {
             try { total += new FileInfo(f.FullPath!).Length; } catch { /* ignore */ }
         }
-        return total < 1024 * 1024 ? $"{total / 1024d:0.#} KB" : $"{total / 1024d / 1024d:0.#} MB";
+        return total < 1024 ? $"{total} B"
+            : total < 1024 * 1024 ? $"{total / 1024d:0.#} KB"
+            : total < 1024L * 1024 * 1024 ? $"{total / 1024d / 1024d:0.#} MB"
+            : $"{total / 1024d / 1024d / 1024d:0.##} GB";
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -310,7 +307,7 @@ public sealed record FileItem(
     string PreviewLabel,
     string Description,
     FileCategory Category = FileCategory.Other,
-    FontWeight Weight = default,
+    FontWeight Weight = FontWeight.Normal,
     string? FullPath = null,
     string? Created = null)
 {

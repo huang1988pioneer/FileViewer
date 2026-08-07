@@ -155,6 +155,15 @@ public static class FileTypeCatalog
             || string.Equals(ext, ".tsv", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsXlsx(string? path) =>
+        string.Equals(Path.GetExtension(path), ".xlsx", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsDocx(string? path) =>
+        string.Equals(Path.GetExtension(path), ".docx", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsPptx(string? path) =>
+        string.Equals(Path.GetExtension(path), ".pptx", StringComparison.OrdinalIgnoreCase);
+
     public static bool IsTextLike(string? path)
     {
         var cat = GetCategory(path);

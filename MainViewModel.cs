@@ -353,10 +353,17 @@ public sealed record FileItem(
         FileCategory.Archive => "壓縮檔 · 可改用系統程式開啟；ZIP 支援內建預覽。",
         FileCategory.Spreadsheet when FileTypeCatalog.IsCsvLike(path)
             => "CSV／TSV · 可切換純文字或表格預覽。",
+        FileCategory.Spreadsheet when FileTypeCatalog.IsXlsx(path)
+            => "Excel · 可切換工作表並預覽儲存格內容。",
         FileCategory.Spreadsheet => "試算表 · 顯示工作表與內容摘要。",
+        FileCategory.Presentation when FileTypeCatalog.IsPptx(path)
+            => "PowerPoint · 顯示各投影片文字內容。",
         FileCategory.Presentation => "簡報 · 顯示投影片文字預覽。",
         FileCategory.Code => "原始碼 · 以文字方式預覽。",
-        FileCategory.Document when FileTypeCatalog.IsPdf(path) => "PDF 文件 · 顯示頁數、中繼資料與文字摘錄。",
+        FileCategory.Document when FileTypeCatalog.IsPdf(path)
+            => "PDF · 顯示頁數、中繼資料與文字內容。",
+        FileCategory.Document when FileTypeCatalog.IsDocx(path)
+            => "Word · 顯示文件段落文字。",
         FileCategory.Document when FileTypeCatalog.IsSubtitle(path) => "字幕檔 · 顯示時間軸與對白文字。",
         FileCategory.Document => "文件 · 可預覽文字內容。",
         _ => "已載入本機檔案；可預覽或交給系統開啟。"

@@ -10,29 +10,25 @@ using LibVLCSharp.Shared;
 namespace FileViewer.Services;
 
 /// <summary>
-/// In-app audio/video preview powered by LibVLC (play / pause / stop / seek).
-/// Supports MP3/WAV/… and video containers (MP4, …).
+/// In-app audio/video preview (LibVLC). Uses a shared engine so switching
+/// files does not recreate native player/HWND (avoids MP4 crash-on-select).
 /// </summary>
 public sealed class MediaPreviewControl : UserControl, IDisposable
 {
-    private static bool _coreReady;
-    private static string? _coreError;
-    private static readonly object CoreLock = new();
-
     private readonly string _path;
     private readonly bool _isVideo;
-    private LibVLC? _libVlc;
-    private MediaPlayer? _player;
-    private Media? _media;
     private VideoView? _videoView;
+    private Panel? _videoHost;
     private Button? _playPauseBtn;
     private TextBlock? _timeLabel;
     private TextBlock? _statusLabel;
     private Slider? _seekSlider;
     private Slider? _volumeSlider;
+    private DispatcherTimer? _timer;
     private bool _seeking;
     private bool _disposed;
     private bool _started;
+    private bool _viewAttached;
 
     public MediaPreviewControl(string path, bool isVideo)
     {
@@ -40,6 +36,7 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         _isVideo = isVideo;
         Content = BuildUi();
         AttachedToVisualTree += OnAttached;
+        DetachedFromVisualTree += OnDetachedVisual;
     }
 
     private Control BuildUi()
@@ -54,12 +51,45 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
 
         if (_isVideo)
         {
-            _videoView = new VideoView
+            _videoHost = new Grid
             {
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Stretch
             };
-            root.Children.Add(_videoView);
+
+            // Placeholder until VideoView is created after layout (safer for HWND).
+            _videoHost.Children.Add(new StackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "▷",
+                        FontSize = 48,
+                        Foreground = Brushes.White,
+                        HorizontalAlignment = HorizontalAlignment.Center
+                    },
+                    new TextBlock
+                    {
+                        Text = Path.GetFileName(_path),
+                        Foreground = Brush.Parse("#C8D0D0"),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxWidth = 320
+                    },
+                    (_statusLabel = new TextBlock
+                    {
+                        Text = "準備影片預覽…",
+                        Foreground = Brush.Parse("#8A9A94"),
+                        FontSize = 12,
+                        HorizontalAlignment = HorizontalAlignment.Center
+                    })
+                }
+            });
+            root.Children.Add(_videoHost);
         }
         else
         {
@@ -144,7 +174,14 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
             VerticalContentAlignment = VerticalAlignment.Center,
             Margin = new Thickness(6, 0, 0, 0)
         };
-        stopBtn.Click += (_, _) => Stop();
+        stopBtn.Click += (_, _) =>
+        {
+            VlcEngine.Stop();
+            if (_seekSlider is not null) _seekSlider.Value = 0;
+            if (_playPauseBtn is not null) _playPauseBtn.Content = "▶";
+            SetStatus("已停止");
+            UpdateTimeLabel();
+        };
 
         _seekSlider = new Slider
         {
@@ -155,7 +192,12 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
             Margin = new Thickness(10, 0)
         };
         _seekSlider.AddHandler(PointerPressedEvent, (_, _) => _seeking = true, Avalonia.Interactivity.RoutingStrategies.Tunnel);
-        _seekSlider.AddHandler(PointerReleasedEvent, OnSeekReleased, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        _seekSlider.AddHandler(PointerReleasedEvent, (_, _) =>
+        {
+            if (_seekSlider is not null)
+                VlcEngine.SeekRatio(_seekSlider.Value / 1000.0);
+            _seeking = false;
+        }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
 
         _timeLabel = new TextBlock
         {
@@ -179,8 +221,8 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         ToolTip.SetTip(_volumeSlider, "音量");
         _volumeSlider.PropertyChanged += (_, e) =>
         {
-            if (e.Property == Slider.ValueProperty && _player is not null && !_disposed)
-                _player.Volume = (int)_volumeSlider.Value;
+            if (e.Property == Slider.ValueProperty && !_disposed)
+                VlcEngine.SetVolume((int)_volumeSlider.Value);
         };
 
         return new Border
@@ -226,185 +268,222 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         if (_disposed || _started) return;
         _started = true;
 
-        // Defer slightly so the native host / layout is ready (esp. video; safe for audio too).
-        Dispatcher.UIThread.Post(StartPlayback, DispatcherPriority.Loaded);
+        // Wait until layout has a real size before creating native VideoView.
+        Dispatcher.UIThread.Post(() => _ = StartAsync(), DispatcherPriority.Background);
     }
 
-    private void StartPlayback()
+    private void OnDetachedVisual(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        // Do not Dispose here — ContentControl swap disposes explicitly.
+        // Only detach the view so HWND is cleared without killing the shared engine.
+        if (_videoView is not null)
+            VlcEngine.DetachView(_videoView);
+        _viewAttached = false;
+    }
+
+    private async Task StartAsync()
     {
         if (_disposed) return;
+
+        var err = VlcEngine.InitError;
+        if (err is not null)
+        {
+            ShowError(err);
+            return;
+        }
+
+        if (!File.Exists(_path))
+        {
+            ShowError("找不到媒體檔案。");
+            return;
+        }
+
         try
         {
-            EnsureCore();
-            if (_coreError is not null)
-            {
-                ShowError(_coreError);
-                return;
-            }
+            VlcEngine.SetVolume(_volumeSlider is not null ? (int)_volumeSlider.Value : 90);
 
-            var fullPath = Path.GetFullPath(_path);
-            if (!File.Exists(fullPath))
+            // Inline VideoView (NativeControlHost) is a common Avalonia+LibVLC crash source
+            // when previews are swapped quickly. Strategy:
+            // 1) Try attach a video surface once layout is ready.
+            // 2) If that fails, play with :no-video (audio + controls still work — no 闪退).
+            var enableVideo = false;
+            if (_isVideo)
             {
-                ShowError("找不到媒體檔案。");
-                return;
-            }
-
-            // Audio-only: disable video track setup noise; video: keep defaults.
-            _libVlc = _isVideo
-                ? new LibVLC("--no-video-title-show", "--quiet")
-                : new LibVLC("--no-video-title-show", "--quiet", "--no-video");
-
-            _player = new MediaPlayer(_libVlc)
-            {
-                Volume = _volumeSlider is not null ? (int)_volumeSlider.Value : 90
-            };
-
-            // Prefer file URI so paths with spaces / non-ASCII work reliably on Windows.
-            var uri = new Uri(fullPath);
-            _media = new Media(_libVlc, uri);
-
-            if (_videoView is not null)
-                _videoView.MediaPlayer = _player;
-
-            _player.TimeChanged += PlayerOnTimeChanged;
-            _player.LengthChanged += PlayerOnLengthChanged;
-            _player.Playing += (_, _) => Dispatcher.UIThread.Post(() =>
-            {
-                if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
-                SetStatus("播放中");
-            });
-            _player.Paused += (_, _) => Dispatcher.UIThread.Post(() =>
-            {
-                if (_playPauseBtn is not null) _playPauseBtn.Content = "▶";
-                SetStatus("已暫停");
-            });
-            _player.Stopped += (_, _) => Dispatcher.UIThread.Post(() =>
-            {
-                if (_playPauseBtn is not null) _playPauseBtn.Content = "▶";
-                if (_seekSlider is not null && !_seeking) _seekSlider.Value = 0;
-                SetStatus("已停止");
-            });
-            _player.EndReached += (_, _) =>
-            {
-                // LibVLC forbids calling into player from this callback thread.
-                ThreadPool.QueueUserWorkItem(_ =>
+                try
                 {
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        if (_disposed) return;
-                        if (_playPauseBtn is not null) _playPauseBtn.Content = "▶";
-                        if (_seekSlider is not null) _seekSlider.Value = 0;
-                        if (_timeLabel is not null && _player is not null)
-                            _timeLabel.Text = $"0:00 / {FormatTime(_player.Length)}";
-                        SetStatus("播放結束");
-                    });
-                });
-            };
-            _player.EncounteredError += (_, _) => Dispatcher.UIThread.Post(() =>
-            {
-                SetStatus("播放失敗");
-                ShowError($"無法播放此媒體檔案。\n\n{Path.GetFileName(_path)}\n請確認檔案未損壞，或改用系統播放器開啟。");
-            });
+                    await EnsureVideoViewAsync();
+                    enableVideo = _viewAttached && _videoView is not null;
+                }
+                catch
+                {
+                    enableVideo = false;
+                    _viewAttached = false;
+                    _videoView = null;
+                }
+            }
+
+            if (_disposed) return;
 
             SetStatus("載入中…");
-            if (!_player.Play(_media))
+            var ok = VlcEngine.PlayFile(_path, enableVideoOutput: enableVideo);
+            if (!ok && enableVideo)
             {
-                ShowError("媒體引擎無法開始播放。");
+                // Surface path failed at play time — fall back to audio-only.
+                if (_videoView is not null)
+                {
+                    try { VlcEngine.DetachView(_videoView); } catch { /* ignore */ }
+                }
+                ok = VlcEngine.PlayFile(_path, enableVideoOutput: false);
+                enableVideo = false;
+            }
+
+            if (!ok)
+            {
+                ShowError(
+                    $"無法播放此媒體。\n\n{Path.GetFileName(_path)}\n" +
+                    "可改用「系統播放」開啟。");
                 return;
             }
 
-            SetStatus("播放中");
+            if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
+            SetStatus(_isVideo && !enableVideo
+                ? "播放中（音訊預覽；完整畫面請用系統播放）"
+                : "播放中");
+            StartTimer();
         }
         catch (Exception ex)
         {
-            ShowError($"無法播放媒體：{ex.Message}");
+            // Never let media errors take down the process.
+            try
+            {
+                ShowError($"無法播放媒體：{ex.Message}\n\n可改用系統播放器開啟。");
+            }
+            catch
+            {
+                /* ignore */
+            }
         }
+    }
+
+    private async Task EnsureVideoViewAsync()
+    {
+        if (_videoHost is null || _disposed) return;
+
+        // Let the host get a non-zero arrange size.
+        for (var i = 0; i < 20 && !_disposed; i++)
+        {
+            if (_videoHost.Bounds.Width > 8 && _videoHost.Bounds.Height > 8)
+                break;
+            await Task.Delay(16);
+        }
+
+        if (_disposed) return;
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (_disposed || _videoHost is null) return;
+
+            try
+            {
+                _videoView = new VideoView
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch
+                };
+                _videoHost.Children.Clear();
+                _videoHost.Children.Add(_videoView);
+
+                // Status overlay (doesn't use VideoView.Content floating window path heavily).
+                // Keep status via transport only.
+                VlcEngine.AttachView(_videoView);
+                _viewAttached = true;
+            }
+            catch (Exception ex)
+            {
+                _videoHost.Children.Clear();
+                _videoHost.Children.Add(new TextBlock
+                {
+                    Text = $"無法建立影像預覽表面：{ex.Message}",
+                    Foreground = Brush.Parse("#C8D0D0"),
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(16),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                });
+                _videoView = null;
+                _viewAttached = false;
+            }
+        });
+
+        // One more frame so native handle is created before Play.
+        await Task.Delay(50);
+    }
+
+    private void StartTimer()
+    {
+        _timer?.Stop();
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _timer.Tick += (_, _) =>
+        {
+            if (_disposed || _seeking) return;
+            UpdateTimeLabel();
+            var p = VlcEngine.Player;
+            if (p is null) return;
+            if (p.State is VLCState.Ended or VLCState.Stopped or VLCState.Error)
+            {
+                if (_playPauseBtn is not null) _playPauseBtn.Content = "▶";
+                if (p.State == VLCState.Ended)
+                    SetStatus("播放結束");
+            }
+            else if (p.IsPlaying)
+            {
+                if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
+            }
+        };
+        _timer.Start();
+    }
+
+    private void UpdateTimeLabel()
+    {
+        var p = VlcEngine.Player;
+        if (p is null || _timeLabel is null || _seekSlider is null) return;
+        var time = Math.Max(0, p.Time);
+        var length = Math.Max(0, p.Length);
+        if (length > 0)
+            _seekSlider.Value = Math.Clamp(time * 1000.0 / length, 0, 1000);
+        _timeLabel.Text = $"{FormatTime(time)} / {FormatTime(length)}";
     }
 
     private void TogglePlayPause()
     {
-        if (_player is null)
+        if (_disposed) return;
+        var p = VlcEngine.Player;
+
+        if (p is null || !VlcEngine.IsCurrentPath(_path))
         {
-            if (!_started)
-            {
-                _started = true;
-                StartPlayback();
-            }
+            _ = StartAsync();
             return;
         }
 
-        if (_player.IsPlaying)
+        if (p.IsPlaying)
         {
-            _player.SetPause(true);
+            VlcEngine.Pause(true);
+            if (_playPauseBtn is not null) _playPauseBtn.Content = "▶";
+            SetStatus("已暫停");
             return;
         }
 
-        // After EndReached / Stop, re-supply media.
-        if (_player.State is VLCState.Ended or VLCState.Stopped or VLCState.Error)
+        if (p.State is VLCState.Ended or VLCState.Stopped or VLCState.Error)
         {
-            if (_media is not null)
-                _player.Play(_media);
-            else
-                _player.Play();
-        }
-        else if (_player.State == VLCState.Paused)
-        {
-            _player.SetPause(false);
-        }
-        else
-        {
-            _player.Play();
-        }
-    }
-
-    private void Stop()
-    {
-        if (_player is null) return;
-        _player.Stop();
-        if (_seekSlider is not null) _seekSlider.Value = 0;
-        if (_timeLabel is not null)
-            _timeLabel.Text = $"0:00 / {FormatTime(_player.Length)}";
-        SetStatus("已停止");
-    }
-
-    private void OnSeekReleased(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
-    {
-        if (_player is null || _seekSlider is null)
-        {
-            _seeking = false;
+            VlcEngine.PlayFile(_path, _isVideo && _viewAttached);
+            if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
+            SetStatus("播放中");
             return;
         }
 
-        var length = _player.Length;
-        if (length > 0)
-        {
-            var target = (long)(_seekSlider.Value / 1000.0 * length);
-            _player.Time = target;
-        }
-
-        _seeking = false;
-    }
-
-    private void PlayerOnTimeChanged(object? sender, MediaPlayerTimeChangedEventArgs e)
-    {
-        if (_seeking || _player is null) return;
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (_disposed || _player is null || _seekSlider is null || _timeLabel is null) return;
-            var length = Math.Max(_player.Length, 0);
-            if (length > 0)
-                _seekSlider.Value = Math.Clamp(e.Time * 1000.0 / length, 0, 1000);
-            _timeLabel.Text = $"{FormatTime(e.Time)} / {FormatTime(length)}";
-        });
-    }
-
-    private void PlayerOnLengthChanged(object? sender, MediaPlayerLengthChangedEventArgs e)
-    {
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (_disposed || _timeLabel is null || _player is null) return;
-            _timeLabel.Text = $"{FormatTime(_player.Time)} / {FormatTime(e.Length)}";
-        });
+        VlcEngine.Pause(false);
+        if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
+        SetStatus("播放中");
     }
 
     private void SetStatus(string text)
@@ -419,12 +498,24 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         {
             Background = Brush.Parse("#F1F6F3"),
             Padding = new Thickness(16),
-            Child = new TextBlock
+            Child = new StackPanel
             {
-                Text = message,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = Brush.Parse("#28513D"),
-                VerticalAlignment = VerticalAlignment.Center
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = message,
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = Brush.Parse("#28513D")
+                    },
+                    new TextBlock
+                    {
+                        Text = "提示：可按右側「系統播放」用外部播放器開啟。",
+                        Foreground = Brush.Parse("#64716C"),
+                        FontSize = 12
+                    }
+                }
             }
         };
     }
@@ -446,39 +537,6 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         }
     }
 
-    private static void EnsureCore()
-    {
-        if (_coreReady || _coreError is not null) return;
-        lock (CoreLock)
-        {
-            if (_coreReady || _coreError is not null) return;
-            try
-            {
-                // VideoLAN.LibVLC.* packages place natives under libvlc/<rid>.
-                var ridLib = Path.Combine(AppContext.BaseDirectory, "libvlc");
-                if (Directory.Exists(ridLib))
-                    Core.Initialize();
-                else
-                    Core.Initialize(AppContext.BaseDirectory);
-                _coreReady = true;
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    Core.Initialize();
-                    _coreReady = true;
-                }
-                catch
-                {
-                    _coreError =
-                        $"媒體引擎初始化失敗：{ex.Message}\n\n" +
-                        "Windows／macOS 請使用正式版發佈包；Linux 需安裝系統 libvlc（例如 vlc 套件）。";
-                }
-            }
-        }
-    }
-
     private static string FormatTime(long ms)
     {
         if (ms < 0) ms = 0;
@@ -494,26 +552,25 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         _disposed = true;
 
         AttachedToVisualTree -= OnAttached;
+        DetachedFromVisualTree -= OnDetachedVisual;
+        _timer?.Stop();
+        _timer = null;
 
         try
         {
-            if (_player is not null)
-            {
-                try { _player.Stop(); } catch { /* ignore */ }
-                if (_videoView is not null)
-                    _videoView.MediaPlayer = null;
-                _player.Dispose();
-                _player = null;
-            }
+            // Only stop if this control still owns the current path.
+            if (VlcEngine.IsCurrentPath(_path))
+                VlcEngine.Stop();
 
-            _media?.Dispose();
-            _media = null;
-            _libVlc?.Dispose();
-            _libVlc = null;
+            if (_videoView is not null)
+            {
+                VlcEngine.DetachView(_videoView);
+                _videoView = null;
+            }
         }
         catch
         {
-            // ignore teardown races
+            // never throw from Dispose
         }
     }
 }

@@ -9,6 +9,8 @@ namespace FileViewer;
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel = new();
+    private CancellationTokenSource? _previewCts;
+    private string? _previewPath;
 
     public MainWindow()
     {
@@ -23,19 +25,56 @@ public partial class MainWindow : Window
                 or nameof(MainViewModel.SearchText)
                 or nameof(MainViewModel.CategoryFilter))
             {
-                RefreshPreview();
+                ScheduleRefreshPreview();
             }
         };
-        Opened += (_, _) => RefreshPreview();
+        Opened += (_, _) => ScheduleRefreshPreview();
+    }
+
+    /// <summary>
+    /// Debounce preview rebuilds — SelectedFile + SelectionChanged fire together
+    /// and recreating LibVLC VideoView twice in one tick can crash the process.
+    /// </summary>
+    private void ScheduleRefreshPreview()
+    {
+        _previewCts?.Cancel();
+        _previewCts = new CancellationTokenSource();
+        var token = _previewCts.Token;
+        Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
+        {
+            try
+            {
+                await Task.Delay(40, token);
+                if (!token.IsCancellationRequested)
+                    RefreshPreview();
+            }
+            catch (TaskCanceledException)
+            {
+                // superseded by a newer selection
+            }
+        });
     }
 
     private void RefreshPreview()
     {
         if (PreviewHost is null) return;
+
+        var path = _viewModel.SelectedFile?.FullPath;
+        // Skip no-op rebuilds for the same file (avoids kill/recreate of native video host).
+        if (!string.IsNullOrEmpty(path)
+            && string.Equals(path, _previewPath, StringComparison.OrdinalIgnoreCase)
+            && PreviewHost.Content is not null
+            && _viewModel.SelectedFile is not null)
+        {
+            return;
+        }
+
         if (PreviewHost.Content is IDisposable old)
         {
             try { old.Dispose(); } catch { /* ignore */ }
         }
+
+        _previewPath = path;
         PreviewHost.Content = PreviewBuilder.Build(_viewModel.SelectedFile);
     }
 
@@ -87,7 +126,7 @@ public partial class MainWindow : Window
         RefreshPreview();
     }
 
-    private void Files_SelectionChanged(object? sender, SelectionChangedEventArgs e) => RefreshPreview();
+    private void Files_SelectionChanged(object? sender, SelectionChangedEventArgs e) => ScheduleRefreshPreview();
 
     private async void Files_DoubleTapped(object? sender, TappedEventArgs e)
     {

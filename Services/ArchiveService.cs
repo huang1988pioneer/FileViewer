@@ -12,13 +12,14 @@ public static class ArchiveService
         var list = new List<ArchiveEntryInfo>(archive.Entries.Count);
         foreach (var entry in archive.Entries)
         {
-            var isDir = string.IsNullOrEmpty(entry.Name) || entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\');
+            var full = entry.FullName.Replace('\\', '/');
+            var isDir = string.IsNullOrEmpty(entry.Name) || full.EndsWith('/');
             var name = isDir
-                ? entry.FullName.TrimEnd('/', '\\').Split('/', '\\').LastOrDefault() ?? entry.FullName
+                ? full.TrimEnd('/').Split('/').LastOrDefault() ?? full
                 : entry.Name;
             list.Add(new ArchiveEntryInfo(
                 name,
-                entry.FullName.Replace('\\', '/'),
+                full,
                 isDir,
                 isDir ? 0 : entry.Length,
                 entry.LastWriteTime));

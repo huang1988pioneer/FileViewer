@@ -29,11 +29,14 @@ public static class PreviewReader
                 ".srt" => ReadSrt(path),
                 ".vtt" => ReadVtt(path),
                 ".ass" or ".ssa" => Limit(ReadTextFile(path)),
-                ".docx" or ".odt" => ReadDocxLike(path),
-                ".xlsx" or ".ods" => ReadXlsx(path),
-                ".pptx" or ".odp" => ReadPptx(path),
+                ".docx" => OfficePreview.ReadDocx(path),
+                ".odt" => OfficePreview.ReadOdt(path),
+                ".xlsx" => OfficePreview.ReadXlsxText(path),
+                ".ods" => ReadOdsFallback(path),
+                ".pptx" => OfficePreview.ReadPptx(path),
+                ".odp" => OfficePreview.ReadOdp(path),
                 ".zip" => ArchiveService.FormatListing(path),
-                ".pdf" => ReadPdfInfo(path),
+                ".pdf" => OfficePreview.ReadPdf(path),
                 ".mp3" or ".wav" or ".flac" or ".aac" or ".m4a" or ".ogg" or ".wma"
                     or ".mp4" or ".mov" or ".avi" or ".mkv" or ".wmv" or ".webm" or ".m4v" or ".flv"
                     => MediaInfo(path),
@@ -158,89 +161,47 @@ public static class PreviewReader
         return parts[1].Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? parts[1];
     }
 
-    private static string ReadDocxLike(string path)
+    private static string ReadOdsFallback(string path)
     {
-        using var archive = ZipFile.OpenRead(path);
-        // DOCX
-        var entry = archive.GetEntry("word/document.xml")
-            ?? archive.GetEntry("content.xml"); // ODT
-        if (entry is null) throw new InvalidDataException("找不到文件文字內容。");
-        using var stream = entry.Open();
-        var text = XDocument.Load(stream).Root?.Value ?? string.Empty;
-        var cleaned = Regex.Replace(text, @"\s+", " ").Trim();
-        return $"文件文字預覽\n\n{Limit(cleaned)}";
-    }
-
-    private static string ReadXlsx(string path)
-    {
-        using var archive = ZipFile.OpenRead(path);
-        var sheets = archive.Entries
-            .Where(e => e.FullName.StartsWith("xl/worksheets/", StringComparison.OrdinalIgnoreCase)
-                        && e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
-            .Select(e => Path.GetFileNameWithoutExtension(e.Name))
-            .ToArray();
-
-        var shared = archive.GetEntry("xl/sharedStrings.xml");
-        var samples = new List<string>();
-        if (shared is not null)
+        try
         {
-            using var stream = shared.Open();
-            var doc = XDocument.Load(stream);
-            samples = doc.Descendants()
-                .Where(x => x.Name.LocalName == "t")
-                .Select(x => x.Value)
-                .Where(v => !string.IsNullOrWhiteSpace(v))
-                .Take(40)
-                .ToList();
-        }
-
-        var sampleBlock = samples.Count == 0
-            ? "（未找到可顯示的共用字串）"
-            : string.Join(Environment.NewLine, samples.Select((s, i) => $"{i + 1}. {s}"));
-
-        return $"試算表預覽\n\n工作表：{string.Join("、", sheets)}\n工作表數量：{sheets.Length}\n\n內容摘要：\n{sampleBlock}";
-    }
-
-    private static string ReadPptx(string path)
-    {
-        using var archive = ZipFile.OpenRead(path);
-        var slides = archive.Entries
-            .Where(e => Regex.IsMatch(e.FullName, @"ppt/slides/slide\d+\.xml", RegexOptions.IgnoreCase))
-            .OrderBy(e => e.FullName)
-            .ToArray();
-        var lines = slides.Select((entry, index) =>
-        {
+            using var archive = ZipFile.OpenRead(path);
+            var entry = archive.Entries.FirstOrDefault(e =>
+                string.Equals(e.FullName.Replace('\\', '/'), "content.xml", StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return "找不到 ODS 內容。";
             using var stream = entry.Open();
-            var text = Regex.Replace(XDocument.Load(stream).Root?.Value ?? string.Empty, @"\s+", " ").Trim();
-            return string.IsNullOrEmpty(text) ? $"{index + 1}. （空白投影片）" : $"{index + 1}. {text}";
-        });
-        return $"簡報預覽\n\n投影片數：{slides.Length}\n\n{Limit(string.Join(Environment.NewLine, lines))}";
+            var doc = XDocument.Load(stream);
+            XNamespace table = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
+            XNamespace text = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+            var sb = new StringBuilder();
+            sb.AppendLine("ODS 試算表預覽");
+            sb.AppendLine();
+            var sheetIndex = 0;
+            foreach (var sheet in doc.Descendants(table + "table").Take(5))
+            {
+                sheetIndex++;
+                var name = sheet.Attribute(table + "name")?.Value ?? $"工作表{sheetIndex}";
+                sb.AppendLine($"── {name} ──");
+                var rowCount = 0;
+                foreach (var row in sheet.Elements(table + "table-row").Take(80))
+                {
+                    var cells = row.Elements(table + "table-cell")
+                        .Select(c => string.Concat(c.Descendants(text + "p").Select(p => p.Value)).Trim())
+                        .ToList();
+                    if (cells.All(string.IsNullOrWhiteSpace)) continue;
+                    sb.AppendLine(string.Join(" | ", cells));
+                    rowCount++;
+                }
+                if (rowCount == 0) sb.AppendLine("（空白）");
+                sb.AppendLine();
+            }
+            return Limit(sb.ToString().TrimEnd());
+        }
+        catch (Exception ex)
+        {
+            return $"無法解析 ODS：{ex.Message}";
+        }
     }
-
-    private static string ReadPdfInfo(string path)
-    {
-        var bytes = File.ReadAllBytes(path);
-        var source = Encoding.Latin1.GetString(bytes);
-        var pages = Regex.Matches(source, @"/Type\s*/Page\b").Count;
-        var title = Regex.Match(source, @"/Title\s*\((.*?)\)").Groups[1].Value;
-        var author = Regex.Match(source, @"/Author\s*\((.*?)\)").Groups[1].Value;
-
-        // Best-effort text stream scrape for a short excerpt
-        var textChunks = Regex.Matches(source, @"\((?:\\.|[^\\)]){4,120}\)")
-            .Select(m => m.Value.Trim('(', ')'))
-            .Where(s => s.Any(char.IsLetterOrDigit) && s.Count(c => c > 31 && c < 127) > s.Length * 0.6)
-            .Take(12)
-            .ToList();
-
-        var excerpt = textChunks.Count == 0
-            ? "此 PDF 可能為掃描影像或使用壓縮文字流，目前顯示基本資訊。"
-            : string.Join(" ", textChunks);
-
-        return $"PDF 文件預覽\n\n頁數：{pages}\n標題：{(string.IsNullOrWhiteSpace(title) ? "未設定" : UnescapePdf(title))}\n作者：{(string.IsNullOrWhiteSpace(author) ? "未設定" : UnescapePdf(author))}\n大小：{bytes.Length / 1024d / 1024d:0.##} MB\n\n文字摘錄：\n{Limit(excerpt)}";
-    }
-
-    private static string UnescapePdf(string value) =>
-        value.Replace("\\n", " ").Replace("\\r", " ").Replace("\\(", "(").Replace("\\)", ")");
 
     private static string MediaInfo(string path)
     {

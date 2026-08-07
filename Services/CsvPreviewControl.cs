@@ -1,7 +1,6 @@
-using System.Dynamic;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Data;
+using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 
@@ -28,7 +27,9 @@ public sealed class CsvPreviewControl : UserControl
     {
         var root = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,*,Auto")
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
         };
 
         _textBtn = ModeButton("純文字", selected: false);
@@ -69,11 +70,11 @@ public sealed class CsvPreviewControl : UserControl
                     new TextBlock
                     {
                         Text = _table.SummaryLine,
-                        Classes = { },
                         Foreground = Brush.Parse("#64716C"),
                         FontSize = 11.5,
                         VerticalAlignment = VerticalAlignment.Center,
                         TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxWidth = 280,
                         [Grid.ColumnProperty] = 1
                     }
                 }
@@ -82,19 +83,6 @@ public sealed class CsvPreviewControl : UserControl
 
         root.Children.Add(toolbar);
         root.Children.Add(_body.WithGridRow(1));
-
-        if (_table.Error is not null)
-        {
-            root.Children.Add(new TextBlock
-            {
-                Text = _table.Error,
-                Foreground = Brush.Parse("#B84A42"),
-                Margin = new Thickness(10),
-                TextWrapping = TextWrapping.Wrap,
-                [Grid.RowProperty] = 2
-            });
-        }
-
         return root;
     }
 
@@ -118,6 +106,7 @@ public sealed class CsvPreviewControl : UserControl
             btn.Background = Brush.Parse("#276F50");
             btn.Foreground = Brushes.White;
             btn.FontWeight = FontWeight.SemiBold;
+            btn.BorderThickness = new Thickness(0);
         }
         else
         {
@@ -133,7 +122,6 @@ public sealed class CsvPreviewControl : UserControl
     {
         if (_textBtn is not null) ApplyModeStyle(_textBtn, !grid);
         if (_gridBtn is not null) ApplyModeStyle(_gridBtn, grid);
-
         _body.Content = grid ? BuildGridView() : BuildTextView();
     }
 
@@ -166,101 +154,124 @@ public sealed class CsvPreviewControl : UserControl
     {
         if (_table.Error is not null)
         {
-            return new Border
-            {
-                Background = Brush.Parse("#F8FAF9"),
-                Padding = new Thickness(14),
-                Child = new TextBlock
-                {
-                    Text = _table.Error,
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = Brush.Parse("#B84A42")
-                }
-            };
+            return Notice(_table.Error, error: true);
         }
 
-        if (_table.ColumnCount == 0)
+        if (_table.ColumnCount == 0 || (_table.DisplayRowCount == 0 && _table.Headers.Count == 0))
         {
-            return new Border
-            {
-                Background = Brush.Parse("#F8FAF9"),
-                Padding = new Thickness(14),
-                Child = new TextBlock
-                {
-                    Text = "沒有可顯示的資料列。",
-                    Foreground = Brush.Parse("#64716C")
-                }
-            };
+            return Notice("沒有可顯示的資料列。\n可切換「純文字」檢視原始內容。");
         }
 
-        // Use ExpandoObject so DataGrid can bind columns by property name.
+        // Build a real visual table (no ExpandoObject/DataGrid binding — Avalonia
+        // often shows empty cells for dynamic properties).
+        const int maxRows = 500;
         var headers = _table.Headers.ToList();
-        var propertyNames = new string[headers.Count];
-        var used = new HashSet<string>(StringComparer.Ordinal);
-        for (var i = 0; i < headers.Count; i++)
-        {
-            var baseName = string.IsNullOrWhiteSpace(headers[i]) ? $"欄{i + 1}" : headers[i];
-            // Property path cannot contain dots/brackets; keep display header separate.
-            var prop = SanitizePropertyName(baseName, i);
-            var unique = prop;
-            var n = 1;
-            while (!used.Add(unique))
-                unique = $"{prop}_{++n}";
-            propertyNames[i] = unique;
-        }
+        var rows = _table.Rows.Take(maxRows).ToList();
+        var colCount = headers.Count;
+        var rowCount = rows.Count + 1; // + header
 
-        var items = new List<ExpandoObject>(_table.Rows.Count);
-        foreach (var row in _table.Rows)
+        var grid = new Grid
         {
-            IDictionary<string, object?> expando = new ExpandoObject();
-            for (var i = 0; i < propertyNames.Length; i++)
-                expando[propertyNames[i]] = i < row.Count ? row[i] : "";
-            items.Add((ExpandoObject)expando);
-        }
-
-        var grid = new DataGrid
-        {
-            AutoGenerateColumns = false,
-            IsReadOnly = true,
-            CanUserResizeColumns = true,
-            CanUserSortColumns = true,
-            CanUserReorderColumns = false,
-            GridLinesVisibility = DataGridGridLinesVisibility.All,
-            HeadersVisibility = DataGridHeadersVisibility.Column,
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-            Background = Brush.Parse("#FFFFFF"),
-            BorderThickness = new Thickness(0),
-            RowBackground = Brush.Parse("#FFFFFF"),
-            ItemsSource = items
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Background = Brush.Parse("#FFFFFF")
         };
 
-        for (var i = 0; i < propertyNames.Length; i++)
+        for (var c = 0; c < colCount; c++)
+            grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto) { MinWidth = 72 });
+
+        for (var r = 0; r < rowCount; r++)
+            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+
+        // Header row
+        for (var c = 0; c < colCount; c++)
         {
-            grid.Columns.Add(new DataGridTextColumn
+            grid.Children.Add(Cell(
+                headers[c],
+                c, 0,
+                background: "#E7EFEA",
+                foreground: "#173C2B",
+                bold: true));
+        }
+
+        // Data rows
+        for (var r = 0; r < rows.Count; r++)
+        {
+            var row = rows[r];
+            var bg = r % 2 == 0 ? "#FFFFFF" : "#F4F8F5";
+            for (var c = 0; c < colCount; c++)
             {
-                Header = headers[i],
-                Binding = new Binding(propertyNames[i]),
-                Width = new DataGridLength(1, DataGridLengthUnitType.Star),
-                MinWidth = 80,
-                MaxWidth = 320
-            });
+                var text = c < row.Count ? row[c] : "";
+                grid.Children.Add(Cell(text, c, r + 1, background: bg, foreground: "#1A2A24", bold: false));
+            }
         }
 
-        return new Border
+        var scroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Content = grid
+        };
+
+        var footerText = _table.IsTruncated || rows.Count < _table.DisplayRowCount
+            ? $"顯示 {rows.Count} / {_table.DisplayRowCount} 列 · {_table.ColumnCount} 欄"
+            : $"{rows.Count} 列 · {_table.ColumnCount} 欄";
+
+        var root = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
+        root.Children.Add(new Border
         {
             Background = Brush.Parse("#FFFFFF"),
-            ClipToBounds = true,
-            Child = grid
-        };
+            BorderBrush = Brush.Parse("#DDE4E0"),
+            BorderThickness = new Thickness(0),
+            Child = scroll
+        });
+        root.Children.Add(new TextBlock
+        {
+            Text = footerText,
+            Foreground = Brush.Parse("#64716C"),
+            FontSize = 11.5,
+            Margin = new Thickness(8, 4),
+            [Grid.RowProperty] = 1
+        });
+        return root;
     }
 
-    private static string SanitizePropertyName(string name, int index)
+    private static Control Cell(string text, int col, int row, string background, string foreground, bool bold)
     {
-        var chars = name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray();
-        var s = new string(chars);
-        if (s.Length == 0 || char.IsDigit(s[0]))
-            s = "C" + index + "_" + s;
-        return s;
+        var border = new Border
+        {
+            Background = Brush.Parse(background),
+            BorderBrush = Brush.Parse("#D5DED8"),
+            BorderThickness = new Thickness(0, 0, 1, 1),
+            Padding = new Thickness(10, 6),
+            MinWidth = 72,
+            MaxWidth = 360,
+            Child = new TextBlock
+            {
+                Text = text ?? "",
+                Foreground = Brush.Parse(foreground),
+                FontSize = bold ? 12 : 12.5,
+                FontWeight = bold ? FontWeight.SemiBold : FontWeight.Normal,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxLines = 2
+            }
+        };
+        Grid.SetColumn(border, col);
+        Grid.SetRow(border, row);
+        return border;
     }
+
+    private static Control Notice(string message, bool error = false) => new Border
+    {
+        Background = Brush.Parse("#F8FAF9"),
+        Padding = new Thickness(14),
+        Child = new TextBlock
+        {
+            Text = message,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brush.Parse(error ? "#B84A42" : "#64716C")
+        }
+    };
 }

@@ -139,8 +139,8 @@
             <TextBlock Classes="muted" Text="{Binding SelectionSummary}"/>
           </StackPanel>
 
-          <!-- Preview fills remaining window height; image scales to this box. -->
-          <Border Grid.Row="1" Classes="panel" Margin="0,14,0,10" Padding="0" ClipToBounds="True"
+          <!-- Preview fills remaining window height. ClipToBounds=False so native video HWND is stable. -->
+          <Border Grid.Row="1" Classes="panel" Margin="0,14,0,10" Padding="0" ClipToBounds="False"
                   MinHeight="160" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
             <ContentControl x:Name="PreviewHost"
                             HorizontalAlignment="Stretch"

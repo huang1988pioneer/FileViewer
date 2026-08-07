@@ -26,6 +26,9 @@ public static class PreviewBuilder
         if (FileTypeCatalog.IsCsvLike(path))
             return new CsvPreviewControl(path);
 
+        if (IsXlsx(path))
+            return new XlsxPreviewControl(path);
+
         if (FileTypeCatalog.IsZip(path))
             return new ZipPreviewControl(path);
 
@@ -37,7 +40,24 @@ public static class PreviewBuilder
         if (FileTypeCatalog.IsMedia(path))
             return new MediaPreviewControl(path, FileTypeCatalog.IsVideo(path));
 
+        // Office docs / PDF / text — richer proportional font for documents
+        if (IsOfficeDocument(path) || FileTypeCatalog.IsPdf(path))
+            return DocumentTextPreview(PreviewReader.Read(path));
+
         return TextPreview(PreviewReader.Read(path));
+    }
+
+    private static bool IsXlsx(string path) =>
+        string.Equals(Path.GetExtension(path), ".xlsx", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOfficeDocument(string path)
+    {
+        var ext = Path.GetExtension(path);
+        return string.Equals(ext, ".docx", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".odt", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".pptx", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".odp", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".ods", StringComparison.OrdinalIgnoreCase);
     }
 
     private static Control ImagePreview(string path)
@@ -70,6 +90,28 @@ public static class PreviewBuilder
             return Notice($"無法載入圖片：{ex.Message}");
         }
     }
+
+    private static Control DocumentTextPreview(string content) => new Border
+    {
+        Background = Brush.Parse("#F8FAF9"),
+        BorderBrush = Brush.Parse("#DDE4E0"),
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(8),
+        Child = new TextBox
+        {
+            Text = content,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            FontFamily = FontFamily.Parse("Segoe UI, Microsoft JhengHei UI, sans-serif"),
+            FontSize = 13,
+            LineHeight = 20,
+            Padding = new Thickness(14),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            VerticalContentAlignment = VerticalAlignment.Top
+        }
+    };
 
     private static Control TextPreview(string content) => new Border
     {

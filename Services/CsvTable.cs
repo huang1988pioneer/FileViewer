@@ -122,17 +122,45 @@ public static class CsvParser
 
     private static string ReadTextLimited(string path, int maxChars)
     {
-        using var stream = File.OpenRead(path);
-        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        var sb = new StringBuilder(Math.Min(maxChars, 64_000));
-        var buffer = new char[4096];
-        int read;
-        while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+        var bytes = File.ReadAllBytes(path);
+        if (bytes.Length == 0) return "";
+
+        // Prefer UTF-8, then system ANSI / legacy code pages (Excel-exported CSV on Windows).
+        try { Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); } catch { /* optional */ }
+        var encodings = new List<Encoding> { Encoding.UTF8, Encoding.Default };
+        try { encodings.Add(Encoding.GetEncoding(950)); } catch { /* Big5 */ }
+        try { encodings.Add(Encoding.GetEncoding(936)); } catch { /* GBK */ }
+
+        string? best = null;
+        var bestScore = int.MinValue;
+        foreach (var enc in encodings)
         {
-            sb.Append(buffer, 0, read);
-            if (sb.Length >= maxChars) break;
+            try
+            {
+                var text = enc.GetString(bytes);
+                if (text.Length > 0 && text[0] == '\uFEFF')
+                    text = text[1..];
+                if (text.Length > maxChars)
+                    text = text[..maxChars];
+
+                // Higher score = fewer replacement chars, more commas/tabs, more CJK letters.
+                var replacements = text.Count(c => c == '\uFFFD');
+                var seps = text.Count(c => c is ',' or '\t' or ';' or '|');
+                var letters = text.Count(c => char.IsLetter(c) || c > 0x2E80);
+                var score = seps * 3 + letters - replacements * 50;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = text;
+                }
+            }
+            catch
+            {
+                // try next encoding
+            }
         }
-        return sb.ToString();
+
+        return best ?? Encoding.UTF8.GetString(bytes);
     }
 
     private static char DetectDelimiter(string path, string sample)

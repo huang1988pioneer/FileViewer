@@ -4,8 +4,8 @@ using LibVLCSharp.Shared;
 namespace FileViewer.Services;
 
 /// <summary>
-/// Process-wide LibVLC instance. Creating/destroying MediaPlayer + VideoView HWND
-/// on every file selection crashes easily on Windows; reuse one engine instead.
+/// Process-wide LibVLC instance. Reuses one MediaPlayer so file switching
+/// does not recreate the native player (reduces crashes on Windows).
 /// </summary>
 internal static class VlcEngine
 {
@@ -16,6 +16,7 @@ internal static class VlcEngine
     private static MediaPlayer? _player;
     private static Media? _media;
     private static string? _currentPath;
+    private static VideoView? _boundView;
 
     public static string? InitError
     {
@@ -44,9 +45,56 @@ internal static class VlcEngine
         }
     }
 
+    /// <summary>
+    /// Bind the video surface. Safe to call multiple times; re-applies HWND after
+    /// the native control is created.
+    /// </summary>
+    public static void AttachView(VideoView view)
+    {
+        lock (Gate)
+        {
+            EnsurePlayer();
+            if (_player is null) return;
+            try
+            {
+                if (_boundView is not null && !ReferenceEquals(_boundView, view))
+                {
+                    try { _boundView.MediaPlayer = null; } catch { /* ignore */ }
+                }
+
+                _boundView = view;
+                // Setting MediaPlayer triggers LibVLCSharp to push HWND when ready.
+                view.MediaPlayer = null;
+                view.MediaPlayer = _player;
+            }
+            catch
+            {
+                /* ignore */
+            }
+        }
+    }
+
+    public static void DetachView(VideoView view)
+    {
+        lock (Gate)
+        {
+            try
+            {
+                if (ReferenceEquals(_boundView, view))
+                    _boundView = null;
+                if (ReferenceEquals(view.MediaPlayer, _player))
+                    view.MediaPlayer = null;
+            }
+            catch
+            {
+                /* ignore */
+            }
+        }
+    }
+
     /// <param name="enableVideoOutput">
-    /// When false, disables video track output (safe for audio-only / no HWND).
-    /// When true, expects a VideoView to be attached for rendering.
+    /// When true, video is rendered to the attached VideoView (must call AttachView first).
+    /// When false, audio-only (no floating VLC window).
     /// </param>
     public static bool PlayFile(string path, bool enableVideoOutput)
     {
@@ -62,19 +110,25 @@ internal static class VlcEngine
                 if (!File.Exists(full))
                     return false;
 
-                // Stop previous item without tearing down the native player.
                 try { _player.Stop(); } catch { /* ignore */ }
 
+                // Re-bind surface before play so HWND is current.
+                if (enableVideoOutput && _boundView is not null)
+                {
+                    try
+                    {
+                        _boundView.MediaPlayer = null;
+                        _boundView.MediaPlayer = _player;
+                    }
+                    catch { /* ignore */ }
+                }
+
                 _media?.Dispose();
-                // FromPath is more reliable than Uri for some local Windows paths.
                 _media = new Media(_lib, full, FromType.FromPath);
-                // Prefer software decode — HW decode + HWND churn is a common crash source.
+                // Software decode is more stable with Avalonia NativeControlHost.
                 _media.AddOption(":avcodec-hw=none");
                 if (!enableVideoOutput)
-                {
-                    // Prevent VLC from creating a floating video window / using a dead HWND.
                     _media.AddOption(":no-video");
-                }
 
                 _currentPath = full;
                 return _player.Play(_media);
@@ -127,35 +181,6 @@ internal static class VlcEngine
         }
     }
 
-    public static void AttachView(VideoView view)
-    {
-        lock (Gate)
-        {
-            EnsurePlayer();
-            if (_player is null) return;
-            try
-            {
-                // Detach any previous host first.
-                if (!ReferenceEquals(view.MediaPlayer, _player))
-                    view.MediaPlayer = _player;
-            }
-            catch { /* ignore */ }
-        }
-    }
-
-    public static void DetachView(VideoView view)
-    {
-        lock (Gate)
-        {
-            try
-            {
-                if (ReferenceEquals(view.MediaPlayer, _player))
-                    view.MediaPlayer = null;
-            }
-            catch { /* ignore */ }
-        }
-    }
-
     private static void EnsureCore()
     {
         if (_coreReady || _coreError is not null) return;
@@ -199,11 +224,12 @@ internal static class VlcEngine
             if (_player is not null) return;
             try
             {
-                // Keep args minimal; avoid unstable output modules.
                 _lib = new LibVLC(
                     "--no-video-title-show",
                     "--quiet",
-                    "--avcodec-hw=none");
+                    "--avcodec-hw=none",
+                    // Prefer a conventional Windows output path for HWND embedding.
+                    "--vout=direct3d11,direct3d9,gl,any");
                 _player = new MediaPlayer(_lib)
                 {
                     EnableHardwareDecoding = false,
@@ -212,9 +238,22 @@ internal static class VlcEngine
             }
             catch (Exception ex)
             {
-                _coreError = $"無法建立播放器：{ex.Message}";
-                _player = null;
-                _lib = null;
+                // Retry without vout list if options rejected.
+                try
+                {
+                    _lib = new LibVLC("--no-video-title-show", "--quiet", "--avcodec-hw=none");
+                    _player = new MediaPlayer(_lib)
+                    {
+                        EnableHardwareDecoding = false,
+                        Volume = 90
+                    };
+                }
+                catch
+                {
+                    _coreError = $"無法建立播放器：{ex.Message}";
+                    _player = null;
+                    _lib = null;
+                }
             }
         }
     }

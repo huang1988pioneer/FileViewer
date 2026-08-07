@@ -40,8 +40,16 @@ public static class PreviewBuilder
         if (FileTypeCatalog.IsMedia(path))
             return new MediaPreviewControl(path, FileTypeCatalog.IsVideo(path));
 
-        // Office docs / PDF / text — richer proportional font for documents
-        if (IsOfficeDocument(path) || FileTypeCatalog.IsPdf(path))
+        // PDF: rendered page images (true visual preview), not plain text only
+        if (FileTypeCatalog.IsPdf(path))
+            return new PdfPreviewControl(path);
+
+        // PPTX: visual slide cards + text mode
+        if (FileTypeCatalog.IsPptx(path))
+            return new PptxPreviewControl(path);
+
+        // Office docs — structured text extraction
+        if (IsOfficeDocument(path))
             return DocumentTextPreview(PreviewReader.Read(path));
 
         return TextPreview(PreviewReader.Read(path));

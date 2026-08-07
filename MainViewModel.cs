@@ -357,11 +357,11 @@ public sealed record FileItem(
             => "Excel · 可切換工作表並預覽儲存格內容。",
         FileCategory.Spreadsheet => "試算表 · 顯示工作表與內容摘要。",
         FileCategory.Presentation when FileTypeCatalog.IsPptx(path)
-            => "PowerPoint · 顯示各投影片文字內容。",
-        FileCategory.Presentation => "簡報 · 顯示投影片文字預覽。",
+            => "PowerPoint · 以投影片畫面預覽（可翻頁），亦可切換文字。",
+        FileCategory.Presentation => "簡報 · 顯示投影片預覽。",
         FileCategory.Code => "原始碼 · 以文字方式預覽。",
         FileCategory.Document when FileTypeCatalog.IsPdf(path)
-            => "PDF · 顯示頁數、中繼資料與文字內容。",
+            => "PDF · 以頁面影像預覽（可翻頁），亦可切換文字擷取。",
         FileCategory.Document when FileTypeCatalog.IsDocx(path)
             => "Word · 顯示文件段落文字。",
         FileCategory.Document when FileTypeCatalog.IsSubtitle(path) => "字幕檔 · 顯示時間軸與對白文字。",

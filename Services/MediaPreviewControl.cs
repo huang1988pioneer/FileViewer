@@ -10,8 +10,8 @@ using LibVLCSharp.Shared;
 namespace FileViewer.Services;
 
 /// <summary>
-/// In-app audio/video preview (LibVLC). Uses a shared engine so switching
-/// files does not recreate native player/HWND (avoids MP4 crash-on-select).
+/// In-app audio/video preview (LibVLC). Shared engine + deferred play until
+/// VideoView native HWND is ready so MP4 shows picture, not audio-only.
 /// </summary>
 public sealed class MediaPreviewControl : UserControl, IDisposable
 {
@@ -29,6 +29,7 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
     private bool _disposed;
     private bool _started;
     private bool _viewAttached;
+    private bool _videoEnabled;
 
     public MediaPreviewControl(string path, bool isVideo)
     {
@@ -51,44 +52,34 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
 
         if (_isVideo)
         {
+            // Create VideoView immediately so native host can initialize with layout.
+            _videoView = new VideoView
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                MinHeight = 120
+            };
+
+            _statusLabel = new TextBlock
+            {
+                Text = "準備影片…",
+                Foreground = Brush.Parse("#A8B5B0"),
+                FontSize = 12,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(8),
+                IsHitTestVisible = false
+            };
+
             _videoHost = new Grid
             {
                 HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Background = Brush.Parse("#0E1414")
             };
-
-            // Placeholder until VideoView is created after layout (safer for HWND).
-            _videoHost.Children.Add(new StackPanel
-            {
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Spacing = 8,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = "▷",
-                        FontSize = 48,
-                        Foreground = Brushes.White,
-                        HorizontalAlignment = HorizontalAlignment.Center
-                    },
-                    new TextBlock
-                    {
-                        Text = Path.GetFileName(_path),
-                        Foreground = Brush.Parse("#C8D0D0"),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        MaxWidth = 320
-                    },
-                    (_statusLabel = new TextBlock
-                    {
-                        Text = "準備影片預覽…",
-                        Foreground = Brush.Parse("#8A9A94"),
-                        FontSize = 12,
-                        HorizontalAlignment = HorizontalAlignment.Center
-                    })
-                }
-            });
+            _videoHost.Children.Add(_videoView);
+            // Overlay status (Avalonia layer; not VideoView.Content floating window).
+            _videoHost.Children.Add(_statusLabel);
             root.Children.Add(_videoHost);
         }
         else
@@ -267,15 +258,11 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
     {
         if (_disposed || _started) return;
         _started = true;
-
-        // Wait until layout has a real size before creating native VideoView.
-        Dispatcher.UIThread.Post(() => _ = StartAsync(), DispatcherPriority.Background);
+        Dispatcher.UIThread.Post(() => _ = StartAsync(), DispatcherPriority.Loaded);
     }
 
     private void OnDetachedVisual(object? sender, VisualTreeAttachmentEventArgs e)
     {
-        // Do not Dispose here — ContentControl swap disposes explicitly.
-        // Only detach the view so HWND is cleared without killing the shared engine.
         if (_videoView is not null)
             VlcEngine.DetachView(_videoView);
         _viewAttached = false;
@@ -301,40 +288,34 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         try
         {
             VlcEngine.SetVolume(_volumeSlider is not null ? (int)_volumeSlider.Value : 90);
+            SetStatus("載入中…");
 
-            // Inline VideoView (NativeControlHost) is a common Avalonia+LibVLC crash source
-            // when previews are swapped quickly. Strategy:
-            // 1) Try attach a video surface once layout is ready.
-            // 2) If that fails, play with :no-video (audio + controls still work — no 闪退).
-            var enableVideo = false;
             if (_isVideo)
             {
-                try
-                {
-                    await EnsureVideoViewAsync();
-                    enableVideo = _viewAttached && _videoView is not null;
-                }
-                catch
-                {
-                    enableVideo = false;
-                    _viewAttached = false;
-                    _videoView = null;
-                }
+                await PrepareVideoSurfaceAsync();
             }
 
             if (_disposed) return;
 
-            SetStatus("載入中…");
-            var ok = VlcEngine.PlayFile(_path, enableVideoOutput: enableVideo);
-            if (!ok && enableVideo)
+            // Prefer real video when surface is ready.
+            _videoEnabled = _isVideo && _viewAttached && _videoView is not null;
+            var ok = VlcEngine.PlayFile(_path, enableVideoOutput: _videoEnabled);
+
+            // If video play failed, retry once after re-binding HWND.
+            if (!ok && _videoEnabled && _videoView is not null)
             {
-                // Surface path failed at play time — fall back to audio-only.
-                if (_videoView is not null)
-                {
-                    try { VlcEngine.DetachView(_videoView); } catch { /* ignore */ }
-                }
+                await Task.Delay(80);
+                if (_disposed) return;
+                VlcEngine.AttachView(_videoView);
+                ok = VlcEngine.PlayFile(_path, enableVideoOutput: true);
+            }
+
+            // Last resort: audio so the app still previews something.
+            if (!ok && _isVideo)
+            {
+                _videoEnabled = false;
                 ok = VlcEngine.PlayFile(_path, enableVideoOutput: false);
-                enableVideo = false;
+                SetStatus("影像表面無法輸出，改以音訊播放");
             }
 
             if (!ok)
@@ -346,14 +327,23 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
             }
 
             if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
-            SetStatus(_isVideo && !enableVideo
-                ? "播放中（音訊預覽；完整畫面請用系統播放）"
-                : "播放中");
+            if (_videoEnabled)
+                SetStatus("播放中");
+            else if (!_isVideo)
+                SetStatus("播放中");
+
+            // Hide status overlay once video is going so it doesn't cover the picture.
+            if (_videoEnabled && _statusLabel is not null)
+            {
+                await Task.Delay(600);
+                if (!_disposed && _videoEnabled)
+                    _statusLabel.IsVisible = false;
+            }
+
             StartTimer();
         }
         catch (Exception ex)
         {
-            // Never let media errors take down the process.
             try
             {
                 ShowError($"無法播放媒體：{ex.Message}\n\n可改用系統播放器開啟。");
@@ -365,58 +355,58 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         }
     }
 
-    private async Task EnsureVideoViewAsync()
+    /// <summary>
+    /// Wait for layout + native control, then bind MediaPlayer so HWND is valid before Play.
+    /// </summary>
+    private async Task PrepareVideoSurfaceAsync()
     {
-        if (_videoHost is null || _disposed) return;
+        if (_videoView is null || _videoHost is null || _disposed) return;
 
-        // Let the host get a non-zero arrange size.
-        for (var i = 0; i < 20 && !_disposed; i++)
+        // Wait for non-zero arrange size (NativeControlHost needs real bounds).
+        for (var i = 0; i < 40 && !_disposed; i++)
         {
-            if (_videoHost.Bounds.Width > 8 && _videoHost.Bounds.Height > 8)
+            if (_videoHost.Bounds.Width > 16 && _videoHost.Bounds.Height > 16
+                && _videoView.Bounds.Width > 16 && _videoView.Bounds.Height > 16)
                 break;
-            await Task.Delay(16);
+            await Task.Delay(25);
         }
 
         if (_disposed) return;
 
+        // Let Avalonia create the platform handle.
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            if (_disposed || _videoHost is null) return;
-
+            if (_disposed || _videoView is null) return;
             try
             {
-                _videoView = new VideoView
-                {
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    VerticalAlignment = VerticalAlignment.Stretch
-                };
-                _videoHost.Children.Clear();
-                _videoHost.Children.Add(_videoView);
-
-                // Status overlay (doesn't use VideoView.Content floating window path heavily).
-                // Keep status via transport only.
                 VlcEngine.AttachView(_videoView);
                 _viewAttached = true;
             }
-            catch (Exception ex)
+            catch
             {
-                _videoHost.Children.Clear();
-                _videoHost.Children.Add(new TextBlock
-                {
-                    Text = $"無法建立影像預覽表面：{ex.Message}",
-                    Foreground = Brush.Parse("#C8D0D0"),
-                    TextWrapping = TextWrapping.Wrap,
-                    Margin = new Thickness(16),
-                    VerticalAlignment = VerticalAlignment.Center,
-                    HorizontalAlignment = HorizontalAlignment.Center
-                });
-                _videoView = null;
                 _viewAttached = false;
             }
         });
 
-        // One more frame so native handle is created before Play.
-        await Task.Delay(50);
+        // Second bind after native host finishes CreateNativeControlCore.
+        await Task.Delay(120);
+        if (_disposed || _videoView is null) return;
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (_disposed || _videoView is null) return;
+            try
+            {
+                VlcEngine.AttachView(_videoView);
+                _viewAttached = true;
+            }
+            catch
+            {
+                _viewAttached = false;
+            }
+        });
+
+        await Task.Delay(40);
     }
 
     private void StartTimer()
@@ -461,6 +451,8 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
 
         if (p is null || !VlcEngine.IsCurrentPath(_path))
         {
+            _started = false;
+            _started = true;
             _ = StartAsync();
             return;
         }
@@ -470,26 +462,35 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
             VlcEngine.Pause(true);
             if (_playPauseBtn is not null) _playPauseBtn.Content = "▶";
             SetStatus("已暫停");
+            if (_statusLabel is not null) _statusLabel.IsVisible = true;
             return;
         }
 
         if (p.State is VLCState.Ended or VLCState.Stopped or VLCState.Error)
         {
-            VlcEngine.PlayFile(_path, _isVideo && _viewAttached);
+            if (_videoView is not null && _isVideo)
+                VlcEngine.AttachView(_videoView);
+            VlcEngine.PlayFile(_path, enableVideoOutput: _isVideo && _viewAttached);
+            _videoEnabled = _isVideo && _viewAttached;
             if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
             SetStatus("播放中");
+            if (_videoEnabled && _statusLabel is not null) _statusLabel.IsVisible = false;
             return;
         }
 
         VlcEngine.Pause(false);
         if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
         SetStatus("播放中");
+        if (_videoEnabled && _statusLabel is not null) _statusLabel.IsVisible = false;
     }
 
     private void SetStatus(string text)
     {
         if (_statusLabel is not null)
+        {
             _statusLabel.Text = text;
+            _statusLabel.IsVisible = true;
+        }
     }
 
     private void ShowError(string message)
@@ -558,7 +559,6 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
 
         try
         {
-            // Only stop if this control still owns the current path.
             if (VlcEngine.IsCurrentPath(_path))
                 VlcEngine.Stop();
 

@@ -8,19 +8,26 @@ namespace FileViewer.Services;
 
 /// <summary>
 /// CSV/TSV preview with two modes: plain text and Excel-like grid.
+/// Supports automatic and manual encoding selection.
 /// </summary>
 public sealed class CsvPreviewControl : UserControl
 {
-    private readonly CsvTable _table;
+    private readonly string _path;
+    private CsvTable _table;
     private readonly ContentControl _body = new();
+    private readonly TextBlock _summary = new();
+    private readonly StackPanel _encButtons = new() { Orientation = Orientation.Horizontal, Spacing = 4 };
     private Button? _textBtn;
     private Button? _gridBtn;
+    private bool _gridMode = true;
+    private string _encodingKey = "auto";
 
     public CsvPreviewControl(string path)
     {
-        _table = CsvParser.Load(path);
+        _path = path;
+        _table = CsvParser.Load(path, _encodingKey);
         Content = BuildUi();
-        ShowMode(grid: true);
+        RefreshBody();
     }
 
     private Control BuildUi()
@@ -34,8 +41,27 @@ public sealed class CsvPreviewControl : UserControl
 
         _textBtn = ModeButton("純文字", selected: false);
         _gridBtn = ModeButton("表格", selected: true);
-        _textBtn.Click += (_, _) => ShowMode(grid: false);
-        _gridBtn.Click += (_, _) => ShowMode(grid: true);
+        _textBtn.Click += (_, _) => { _gridMode = false; RefreshBody(); };
+        _gridBtn.Click += (_, _) => { _gridMode = true; RefreshBody(); };
+
+        foreach (var (key, label) in CsvParser.EncodingChoices)
+        {
+            var k = key;
+            var btn = ModeButton(label, selected: key == _encodingKey);
+            btn.Padding = new Thickness(8, 3);
+            btn.FontSize = 11.5;
+            btn.Click += (_, _) =>
+            {
+                _encodingKey = k;
+                _table = CsvParser.Load(_path, _encodingKey);
+                RefreshBody();
+            };
+            _encButtons.Children.Add(btn);
+        }
+
+        _summary.Foreground = Brush.Parse("#64716C");
+        _summary.FontSize = 11.5;
+        _summary.TextTrimming = TextTrimming.CharacterEllipsis;
 
         var toolbar = new Border
         {
@@ -43,39 +69,54 @@ public sealed class CsvPreviewControl : UserControl
             BorderBrush = Brush.Parse("#DDE4E0"),
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(8, 6),
-            Child = new Grid
+            Child = new StackPanel
             {
-                ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+                Spacing = 6,
                 Children =
                 {
+                    new Grid
+                    {
+                        ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+                        Children =
+                        {
+                            new StackPanel
+                            {
+                                Orientation = Orientation.Horizontal,
+                                Spacing = 6,
+                                VerticalAlignment = VerticalAlignment.Center,
+                                Children =
+                                {
+                                    new TextBlock
+                                    {
+                                        Text = "檢視",
+                                        Foreground = Brush.Parse("#64716C"),
+                                        FontSize = 12,
+                                        VerticalAlignment = VerticalAlignment.Center,
+                                        Margin = new Thickness(0, 0, 4, 0)
+                                    },
+                                    _textBtn,
+                                    _gridBtn
+                                }
+                            },
+                            _summary.WithGridColumn(1)
+                        }
+                    },
                     new StackPanel
                     {
                         Orientation = Orientation.Horizontal,
                         Spacing = 6,
-                        VerticalAlignment = VerticalAlignment.Center,
                         Children =
                         {
                             new TextBlock
                             {
-                                Text = "檢視",
+                                Text = "編碼",
                                 Foreground = Brush.Parse("#64716C"),
                                 FontSize = 12,
                                 VerticalAlignment = VerticalAlignment.Center,
-                                Margin = new Thickness(0, 0, 4, 0)
+                                Margin = new Thickness(0, 0, 2, 0)
                             },
-                            _textBtn,
-                            _gridBtn
+                            _encButtons
                         }
-                    },
-                    new TextBlock
-                    {
-                        Text = _table.SummaryLine,
-                        Foreground = Brush.Parse("#64716C"),
-                        FontSize = 11.5,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        MaxWidth = 280,
-                        [Grid.ColumnProperty] = 1
                     }
                 }
             }
@@ -84,6 +125,22 @@ public sealed class CsvPreviewControl : UserControl
         root.Children.Add(toolbar);
         root.Children.Add(_body.WithGridRow(1));
         return root;
+    }
+
+    private void RefreshBody()
+    {
+        if (_textBtn is not null) ApplyModeStyle(_textBtn, !_gridMode);
+        if (_gridBtn is not null) ApplyModeStyle(_gridBtn, _gridMode);
+
+        for (var i = 0; i < _encButtons.Children.Count; i++)
+        {
+            if (_encButtons.Children[i] is not Button b) continue;
+            var key = CsvParser.EncodingChoices[i].Key;
+            ApplyModeStyle(b, key == _encodingKey);
+        }
+
+        _summary.Text = _table.SummaryLine;
+        _body.Content = _gridMode ? BuildGridView() : BuildTextView();
     }
 
     private static Button ModeButton(string label, bool selected)
@@ -118,13 +175,6 @@ public sealed class CsvPreviewControl : UserControl
         }
     }
 
-    private void ShowMode(bool grid)
-    {
-        if (_textBtn is not null) ApplyModeStyle(_textBtn, !grid);
-        if (_gridBtn is not null) ApplyModeStyle(_gridBtn, grid);
-        _body.Content = grid ? BuildGridView() : BuildTextView();
-    }
-
     private Control BuildTextView()
     {
         var text = _table.Error is not null
@@ -140,7 +190,7 @@ public sealed class CsvPreviewControl : UserControl
                 IsReadOnly = true,
                 AcceptsReturn = true,
                 TextWrapping = TextWrapping.NoWrap,
-                FontFamily = FontFamily.Parse("Cascadia Mono, Consolas, Menlo, monospace"),
+                FontFamily = FontFamily.Parse("Cascadia Mono, Consolas, Microsoft JhengHei UI, monospace"),
                 FontSize = 12.5,
                 Padding = new Thickness(12),
                 Background = Brushes.Transparent,
@@ -153,22 +203,16 @@ public sealed class CsvPreviewControl : UserControl
     private Control BuildGridView()
     {
         if (_table.Error is not null)
-        {
             return Notice(_table.Error, error: true);
-        }
 
         if (_table.ColumnCount == 0 || (_table.DisplayRowCount == 0 && _table.Headers.Count == 0))
-        {
-            return Notice("沒有可顯示的資料列。\n可切換「純文字」檢視原始內容。");
-        }
+            return Notice("沒有可顯示的資料列。\n可切換「純文字」或改選編碼。");
 
-        // Build a real visual table (no ExpandoObject/DataGrid binding — Avalonia
-        // often shows empty cells for dynamic properties).
         const int maxRows = 500;
         var headers = _table.Headers.ToList();
         var rows = _table.Rows.Take(maxRows).ToList();
         var colCount = headers.Count;
-        var rowCount = rows.Count + 1; // + header
+        var rowCount = rows.Count + 1;
 
         var grid = new Grid
         {
@@ -179,22 +223,12 @@ public sealed class CsvPreviewControl : UserControl
 
         for (var c = 0; c < colCount; c++)
             grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto) { MinWidth = 72 });
-
         for (var r = 0; r < rowCount; r++)
             grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
-        // Header row
         for (var c = 0; c < colCount; c++)
-        {
-            grid.Children.Add(Cell(
-                headers[c],
-                c, 0,
-                background: "#E7EFEA",
-                foreground: "#173C2B",
-                bold: true));
-        }
+            grid.Children.Add(Cell(headers[c], c, 0, "#E7EFEA", "#173C2B", bold: true));
 
-        // Data rows
         for (var r = 0; r < rows.Count; r++)
         {
             var row = rows[r];
@@ -202,30 +236,24 @@ public sealed class CsvPreviewControl : UserControl
             for (var c = 0; c < colCount; c++)
             {
                 var text = c < row.Count ? row[c] : "";
-                grid.Children.Add(Cell(text, c, r + 1, background: bg, foreground: "#1A2A24", bold: false));
+                grid.Children.Add(Cell(text, c, r + 1, bg, "#1A2A24", bold: false));
             }
         }
 
-        var scroll = new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            Content = grid
-        };
-
         var footerText = _table.IsTruncated || rows.Count < _table.DisplayRowCount
-            ? $"顯示 {rows.Count} / {_table.DisplayRowCount} 列 · {_table.ColumnCount} 欄"
-            : $"{rows.Count} 列 · {_table.ColumnCount} 欄";
+            ? $"顯示 {rows.Count} / {_table.DisplayRowCount} 列 · {_table.ColumnCount} 欄 · {_table.EncodingName}"
+            : $"{rows.Count} 列 · {_table.ColumnCount} 欄 · {_table.EncodingName}";
 
         var root = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
         root.Children.Add(new Border
         {
             Background = Brush.Parse("#FFFFFF"),
-            BorderBrush = Brush.Parse("#DDE4E0"),
-            BorderThickness = new Thickness(0),
-            Child = scroll
+            Child = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = grid
+            }
         });
         root.Children.Add(new TextBlock
         {
@@ -254,6 +282,7 @@ public sealed class CsvPreviewControl : UserControl
                 Foreground = Brush.Parse(foreground),
                 FontSize = bold ? 12 : 12.5,
                 FontWeight = bold ? FontWeight.SemiBold : FontWeight.Normal,
+                FontFamily = FontFamily.Parse("Segoe UI, Microsoft JhengHei UI, sans-serif"),
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 MaxLines = 2
             }

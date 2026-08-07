@@ -75,7 +75,19 @@ public partial class MainWindow : Window
         }
 
         _previewPath = path;
-        PreviewHost.Content = PreviewBuilder.Build(_viewModel.SelectedFile);
+        try
+        {
+            PreviewHost.Content = PreviewBuilder.Build(_viewModel.SelectedFile);
+        }
+        catch (Exception ex)
+        {
+            PreviewHost.Content = new TextBlock
+            {
+                Text = $"預覽失敗：{ex.Message}",
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                Margin = new Avalonia.Thickness(12)
+            };
+        }
     }
 
     private async void OpenFolder_Click(object? sender, RoutedEventArgs e)

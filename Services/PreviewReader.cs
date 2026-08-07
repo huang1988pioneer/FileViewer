@@ -26,6 +26,9 @@ public static class PreviewReader
                     or ".sql" or ".yaml" or ".yml" or ".toml" or ".ini" or ".sh" or ".ps1"
                     or ".bat" or ".cmd" or ".svg" or ".rtf"
                     => Limit(ReadTextFile(path)),
+                ".srt" => ReadSrt(path),
+                ".vtt" => ReadVtt(path),
+                ".ass" or ".ssa" => Limit(ReadTextFile(path)),
                 ".docx" or ".odt" => ReadDocxLike(path),
                 ".xlsx" or ".ods" => ReadXlsx(path),
                 ".pptx" or ".odp" => ReadPptx(path),
@@ -56,6 +59,103 @@ public static class PreviewReader
             if (sb.Length >= MaxCharacters) break;
         }
         return sb.ToString();
+    }
+
+    private static string ReadSrt(string path) => FormatSubtitleCues(ReadTextFile(path), "SRT");
+
+    private static string ReadVtt(string path)
+    {
+        var raw = ReadTextFile(path);
+        // Drop WEBVTT header and NOTE blocks, then parse like SRT cues.
+        var cleaned = Regex.Replace(raw, @"^WEBVTT[^\n]*\n?", "", RegexOptions.IgnoreCase);
+        cleaned = Regex.Replace(cleaned, @"^NOTE\b.*?(?=\n\s*\n|\z)", "",
+            RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        return FormatSubtitleCues(cleaned, "VTT");
+    }
+
+    private static string FormatSubtitleCues(string raw, string formatLabel)
+    {
+        if (raw.Length > 0 && raw[0] == '\uFEFF')
+            raw = raw[1..];
+
+        var blocks = Regex.Split(raw.Replace("\r\n", "\n").Replace('\r', '\n'), @"\n\s*\n");
+        var cues = new List<(string Index, string Time, string Text)>();
+
+        foreach (var block in blocks)
+        {
+            var lines = block.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length < 2) continue;
+
+            string index;
+            string time;
+            int textStart;
+
+            if (Regex.IsMatch(lines[0], @"^\d+$")
+                && lines.Length >= 2
+                && lines[1].Contains("-->", StringComparison.Ordinal))
+            {
+                index = lines[0];
+                time = lines[1];
+                textStart = 2;
+            }
+            else if (lines[0].Contains("-->", StringComparison.Ordinal))
+            {
+                index = (cues.Count + 1).ToString();
+                time = lines[0];
+                textStart = 1;
+            }
+            else if (lines.Length >= 3 && lines[1].Contains("-->", StringComparison.Ordinal))
+            {
+                // VTT cue with identifier on first line
+                index = lines[0];
+                time = lines[1];
+                textStart = 2;
+            }
+            else
+            {
+                continue;
+            }
+
+            var text = string.Join("\n", lines.Skip(textStart));
+            text = Regex.Replace(text, @"</?(?:b|i|u|font|c|v|lang)(?:\s[^>]*)?>", "", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"\{.*?\}", "");
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            cues.Add((index, time.Trim(), text.Trim()));
+            if (cues.Count >= 400) break;
+        }
+
+        if (cues.Count == 0)
+            return $"字幕預覽（{formatLabel}）\n\n（無法解析出字幕軸，改顯示原始內容）\n\n" + Limit(raw);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"字幕預覽（{formatLabel}）");
+        sb.AppendLine();
+        sb.AppendLine($"字幕則數：{cues.Count}{(cues.Count >= 400 ? "+（已截斷）" : "")}");
+        sb.AppendLine($"時間範圍：{ExtractStart(cues[0].Time)} → {ExtractEnd(cues[^1].Time)}");
+        sb.AppendLine();
+
+        foreach (var cue in cues)
+        {
+            sb.AppendLine($"#{cue.Index}  {cue.Time}");
+            sb.AppendLine(cue.Text);
+            sb.AppendLine();
+        }
+
+        return Limit(sb.ToString().TrimEnd());
+    }
+
+    private static string ExtractStart(string timeLine)
+    {
+        var parts = timeLine.Split("-->", 2, StringSplitOptions.TrimEntries);
+        return parts.Length > 0 ? parts[0].Split(' ')[0] : timeLine;
+    }
+
+    private static string ExtractEnd(string timeLine)
+    {
+        var parts = timeLine.Split("-->", 2, StringSplitOptions.TrimEntries);
+        if (parts.Length < 2) return timeLine;
+        return parts[1].Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? parts[1];
     }
 
     private static string ReadDocxLike(string path)
@@ -147,7 +247,7 @@ public static class PreviewReader
         var info = new FileInfo(path);
         var cat = FileTypeCatalog.GetCategory(path);
         var kind = cat == FileCategory.Video ? "影片" : "音訊";
-        return $"{kind}檔案\n\n檔案：{info.Name}\n類型：{info.Extension.TrimStart('.').ToUpperInvariant()}\n大小：{info.Length / 1024d / 1024d:0.##} MB\n修改：{info.LastWriteTime:yyyy/MM/dd HH:mm}\n\n按「以系統播放器開啟」即可播放。FileViewer 會保留檔案於原位，不修改內容。";
+        return $"{kind}檔案\n\n檔案：{info.Name}\n類型：{info.Extension.TrimStart('.').ToUpperInvariant()}\n大小：{info.Length / 1024d / 1024d:0.##} MB\n修改：{info.LastWriteTime:yyyy/MM/dd HH:mm}\n\n可於預覽區直接播放，亦可改用系統播放器開啟。";
     }
 
     private static string Fallback(string path, string extension)

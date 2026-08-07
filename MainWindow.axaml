@@ -132,19 +132,27 @@
 
       <!-- Right preview / tools -->
       <Border Grid.Column="2" Background="#FBFCFB" BorderBrush="#DDE4E0" BorderThickness="1,0,0,0" Padding="18">
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,*,Auto,Auto">
           <StackPanel>
             <TextBlock Classes="caption" Text="預覽"/>
             <TextBlock Text="{Binding SelectedFile.Name, FallbackValue=未選取}" FontSize="18" FontWeight="SemiBold" Margin="0,5,0,2" TextTrimming="CharacterEllipsis"/>
             <TextBlock Classes="muted" Text="{Binding SelectionSummary}"/>
           </StackPanel>
 
-          <ScrollViewer Grid.Row="1" Margin="0,14,0,12" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Spacing="12">
-              <Border Classes="panel" Height="240" Padding="0" ClipToBounds="True">
-                <ContentControl x:Name="PreviewHost"/>
-              </Border>
+          <!-- Preview fills remaining window height; image scales to this box. -->
+          <Border Grid.Row="1" Classes="panel" Margin="0,14,0,10" Padding="0" ClipToBounds="True"
+                  MinHeight="160" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+            <ContentControl x:Name="PreviewHost"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            VerticalContentAlignment="Stretch"/>
+          </Border>
 
+          <ScrollViewer Grid.Row="2" Margin="0,0,0,10" MaxHeight="220"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="12">
               <TextBlock Text="{Binding SelectedFile.Description}" TextWrapping="Wrap" Classes="muted"/>
 
               <!-- PDF tools -->
@@ -178,9 +186,10 @@
               <Border Classes="panel" Padding="12" IsVisible="{Binding IsMediaSelected}">
                 <StackPanel Spacing="10">
                   <TextBlock Text="媒體播放" FontWeight="SemiBold"/>
-                  <TextBlock Classes="caption" Text="交給系統預設播放器（類似 FileViewPro 的一鍵開啟）"/>
+                  <TextBlock Classes="caption" Text="上方預覽可直接播放；亦可交給系統播放器全螢幕觀看。"/>
                   <WrapPanel ItemWidth="118" ItemHeight="36">
-                    <Button Classes="tool primary" Content="▶ 播放" Click="OpenSystem_Click"/>
+                    <Button Classes="tool" Content="放大預覽" Click="Preview_Click"/>
+                    <Button Classes="tool primary" Content="系統播放" Click="OpenSystem_Click"/>
                     <Button Classes="tool" Content="顯示位置" Click="Reveal_Click"/>
                     <Button Classes="tool" Content="複製路徑" Click="CopyPath_Click"/>
                   </WrapPanel>
@@ -227,7 +236,7 @@
             </StackPanel>
           </ScrollViewer>
 
-          <StackPanel Grid.Row="2" Spacing="8">
+          <StackPanel Grid.Row="3" Spacing="8">
             <Button Classes="primary" Content="開啟預覽視窗" Click="Preview_Click" HorizontalAlignment="Stretch"/>
             <Grid ColumnDefinitions="*,*">
               <Button Content="以系統開啟" Click="OpenSystem_Click" Margin="0,0,4,0"/>

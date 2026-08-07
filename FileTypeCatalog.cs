@@ -27,7 +27,7 @@ public static class FileTypeCatalog
             [".txt"] = FileCategory.Document,
             [".rtf"] = FileCategory.Document,
             [".md"] = FileCategory.Document,
-            [".csv"] = FileCategory.Document,
+            [".csv"] = FileCategory.Spreadsheet,
             [".log"] = FileCategory.Document,
             [".json"] = FileCategory.Document,
             [".xml"] = FileCategory.Document,
@@ -37,6 +37,10 @@ public static class FileTypeCatalog
             [".docx"] = FileCategory.Document,
             [".odt"] = FileCategory.Document,
             [".epub"] = FileCategory.Document,
+            [".srt"] = FileCategory.Document,
+            [".vtt"] = FileCategory.Document,
+            [".ass"] = FileCategory.Document,
+            [".ssa"] = FileCategory.Document,
 
             // Spreadsheets
             [".xls"] = FileCategory.Spreadsheet,
@@ -144,12 +148,29 @@ public static class FileTypeCatalog
     public static bool IsZip(string? path) =>
         string.Equals(Path.GetExtension(path), ".zip", StringComparison.OrdinalIgnoreCase);
 
+    public static bool IsCsvLike(string? path)
+    {
+        var ext = Path.GetExtension(path);
+        return string.Equals(ext, ".csv", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".tsv", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool IsTextLike(string? path)
     {
         var cat = GetCategory(path);
         if (cat is FileCategory.Code or FileCategory.Document) return true;
         var ext = Path.GetExtension(path);
-        return ext is ".txt" or ".csv" or ".log" or ".json" or ".xml" or ".md" or ".html" or ".htm" or ".rtf" or ".tsv";
+        return ext is ".txt" or ".csv" or ".log" or ".json" or ".xml" or ".md" or ".html" or ".htm" or ".rtf" or ".tsv"
+            or ".srt" or ".vtt" or ".ass" or ".ssa";
+    }
+
+    public static bool IsSubtitle(string? path)
+    {
+        var ext = Path.GetExtension(path);
+        return string.Equals(ext, ".srt", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".vtt", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".ass", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".ssa", StringComparison.OrdinalIgnoreCase);
     }
 
     public static (string TypeLabel, string Icon, string IconBackground, string PreviewLabel) Describe(string path)
@@ -165,11 +186,14 @@ public static class FileTypeCatalog
             FileCategory.Video => ("影片", "▷", "#E8EAF4", label),
             FileCategory.Audio => ("音訊", "♪", "#F5EAE2", label),
             FileCategory.Archive => ("壓縮檔", "▤", "#F4EFD9", label),
+            FileCategory.Spreadsheet when ext is ".csv" or ".tsv"
+                => (ext == ".tsv" ? "TSV 表格" : "CSV 表格", "X", "#E1F1E6", label),
             FileCategory.Spreadsheet => ("Excel 試算表", "X", "#E1F1E6", label),
             FileCategory.Presentation => ("PowerPoint 簡報", "P", "#F8E6DB", label),
             FileCategory.Code => ("原始碼", "</>", "#E8EEF0", label),
             FileCategory.Document when ext == ".pdf" => ("PDF 文件", "▤", "#FCE9E7", "PDF"),
             FileCategory.Document when ext is ".doc" or ".docx" or ".odt" => ("Word 文件", "W", "#E8EEF9", label),
+            FileCategory.Document when ext is ".srt" or ".vtt" or ".ass" or ".ssa" => ("字幕", "S", "#E8EEF9", label),
             FileCategory.Document => ("文件", "T", "#E8EEF0", label),
             _ => ("檔案", "□", "#EAF0EC", label)
         };

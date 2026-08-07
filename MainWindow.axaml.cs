@@ -32,6 +32,10 @@ public partial class MainWindow : Window
     private void RefreshPreview()
     {
         if (PreviewHost is null) return;
+        if (PreviewHost.Content is IDisposable old)
+        {
+            try { old.Dispose(); } catch { /* ignore */ }
+        }
         PreviewHost.Content = PreviewBuilder.Build(_viewModel.SelectedFile);
     }
 
@@ -60,6 +64,7 @@ public partial class MainWindow : Window
                     Patterns =
                     [
                         "*.pdf", "*.txt", "*.md", "*.csv", "*.json", "*.xml", "*.html", "*.htm",
+                        "*.srt", "*.vtt", "*.ass", "*.ssa",
                         "*.doc", "*.docx", "*.odt", "*.xls", "*.xlsx", "*.ppt", "*.pptx",
                         "*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp", "*.webp", "*.tif", "*.tiff", "*.ico", "*.svg",
                         "*.mp4", "*.mov", "*.avi", "*.mkv", "*.wmv", "*.webm", "*.mp3", "*.wav", "*.flac", "*.m4a", "*.aac",
@@ -89,8 +94,8 @@ public partial class MainWindow : Window
         if (_viewModel.SelectedFile is null) return;
         if (!string.IsNullOrEmpty(_viewModel.SelectedFile.FullPath) && File.Exists(_viewModel.SelectedFile.FullPath))
         {
-            if (FileTypeCatalog.IsMedia(_viewModel.SelectedFile.FullPath)
-                || FileTypeCatalog.GetCategory(_viewModel.SelectedFile.FullPath) == FileCategory.Other)
+            // Unknown types: hand off to OS. Media opens in our preview window with LibVLC.
+            if (FileTypeCatalog.GetCategory(_viewModel.SelectedFile.FullPath) == FileCategory.Other)
             {
                 ShellService.OpenWithDefaultApp(_viewModel.SelectedFile.FullPath);
                 return;

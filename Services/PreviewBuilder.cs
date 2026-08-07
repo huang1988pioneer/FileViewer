@@ -23,11 +23,19 @@ public static class PreviewBuilder
         if (FileTypeCatalog.IsImage(path))
             return ImagePreview(path);
 
+        if (FileTypeCatalog.IsCsvLike(path))
+            return new CsvPreviewControl(path);
+
         if (FileTypeCatalog.IsZip(path))
-            return TextPreview(PreviewReader.Read(path));
+            return new ZipPreviewControl(path);
+
+        if (FileTypeCatalog.IsArchive(path))
+            return Notice(
+                $"此壓縮格式（{Path.GetExtension(path).ToUpperInvariant()}）尚無內建內容清單預覽。\n\n" +
+                "目前可完整預覽 ZIP 內容；RAR／7z 等請用「系統開啟」或解壓工具。");
 
         if (FileTypeCatalog.IsMedia(path))
-            return MediaPreview(file);
+            return new MediaPreviewControl(path, FileTypeCatalog.IsVideo(path));
 
         return TextPreview(PreviewReader.Read(path));
     }
@@ -37,23 +45,23 @@ public static class PreviewBuilder
         try
         {
             var bitmap = new Bitmap(path);
+            // No ScrollViewer: it passes infinite space so the image keeps native size.
+            // Stretch.Uniform fills the available slot while preserving aspect ratio.
             return new Border
             {
                 Background = Brush.Parse("#F1F4F2"),
                 CornerRadius = new CornerRadius(8),
                 ClipToBounds = true,
-                Child = new ScrollViewer
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Child = new Image
                 {
-                    HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-                    VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-                    Content = new Image
-                    {
-                        Source = bitmap,
-                        Stretch = Stretch.Uniform,
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Margin = new Thickness(8)
-                    }
+                    Source = bitmap,
+                    Stretch = Stretch.Uniform,
+                    StretchDirection = StretchDirection.Both,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                    Margin = new Thickness(6)
                 }
             };
         }
@@ -61,49 +69,6 @@ public static class PreviewBuilder
         {
             return Notice($"無法載入圖片：{ex.Message}");
         }
-    }
-
-    private static Control MediaPreview(FileItem file)
-    {
-        var isVideo = FileTypeCatalog.IsVideo(file.FullPath);
-        return new Border
-        {
-            Background = Brush.Parse(isVideo ? "#1A2222" : "#F5EAE2"),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(24),
-            Child = new StackPanel
-            {
-                Spacing = 12,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = isVideo ? "▷" : "♪",
-                        FontSize = 64,
-                        Foreground = isVideo ? Brushes.White : Brush.Parse("#A5623D"),
-                        HorizontalAlignment = HorizontalAlignment.Center
-                    },
-                    new TextBlock
-                    {
-                        Text = file.Name,
-                        FontWeight = FontWeight.SemiBold,
-                        Foreground = isVideo ? Brushes.White : Brush.Parse("#3A2A20"),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        MaxWidth = 360
-                    },
-                    new TextBlock
-                    {
-                        Text = $"{file.Type} · {file.Size}\n使用系統播放器開啟以完整播放。",
-                        Foreground = isVideo ? Brush.Parse("#C8D0D0") : Brush.Parse("#64716C"),
-                        TextAlignment = TextAlignment.Center,
-                        HorizontalAlignment = HorizontalAlignment.Center
-                    }
-                }
-            }
-        };
     }
 
     private static Control TextPreview(string content) => new Border

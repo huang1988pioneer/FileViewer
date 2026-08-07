@@ -347,13 +347,17 @@ public sealed record FileItem(
     private static string BuildDescription(string path, FileCategory category) => category switch
     {
         FileCategory.Image => "圖片檔案 · 內建預覽可直接檢視。",
-        FileCategory.Video => "影片檔案 · 可用系統播放器開啟。",
-        FileCategory.Audio => "音訊檔案 · 可用系統播放器開啟。",
-        FileCategory.Archive => "壓縮檔 · 可檢視內容並解壓縮。",
+        FileCategory.Video => "影片檔案 · 可於預覽區直接播放。",
+        FileCategory.Audio => "音訊檔案 · 可於預覽區直接播放。",
+        FileCategory.Archive when FileTypeCatalog.IsZip(path) => "ZIP 壓縮檔 · 可預覽內容清單並解壓。",
+        FileCategory.Archive => "壓縮檔 · 可改用系統程式開啟；ZIP 支援內建預覽。",
+        FileCategory.Spreadsheet when FileTypeCatalog.IsCsvLike(path)
+            => "CSV／TSV · 可切換純文字或表格預覽。",
         FileCategory.Spreadsheet => "試算表 · 顯示工作表與內容摘要。",
         FileCategory.Presentation => "簡報 · 顯示投影片文字預覽。",
         FileCategory.Code => "原始碼 · 以文字方式預覽。",
         FileCategory.Document when FileTypeCatalog.IsPdf(path) => "PDF 文件 · 顯示頁數、中繼資料與文字摘錄。",
+        FileCategory.Document when FileTypeCatalog.IsSubtitle(path) => "字幕檔 · 顯示時間軸與對白文字。",
         FileCategory.Document => "文件 · 可預覽文字內容。",
         _ => "已載入本機檔案；可預覽或交給系統開啟。"
     };

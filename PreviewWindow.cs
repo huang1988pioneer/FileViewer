@@ -23,9 +23,19 @@ public sealed class PreviewWindow : Window
             Margin = new Thickness(22)
         };
         root.Children.Add(Header(file));
-        root.Children.Add(PreviewBuilder.Build(file).WithGridRow(1));
+        var preview = PreviewBuilder.Build(file);
+        preview.HorizontalAlignment = HorizontalAlignment.Stretch;
+        preview.VerticalAlignment = VerticalAlignment.Stretch;
+        root.Children.Add(preview.WithGridRow(1));
         root.Children.Add(Footer(file).WithGridRow(2));
         Content = root;
+        Closed += (_, _) =>
+        {
+            if (preview is IDisposable d)
+            {
+                try { d.Dispose(); } catch { /* ignore */ }
+            }
+        };
     }
 
     private static Control Header(FileItem file) => new StackPanel

@@ -11,6 +11,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private FileItem? _selectedFile;
     private string _searchText = "";
     private FileCategory _categoryFilter = FileCategory.All;
+    private FileSortColumn _sortColumn = FileSortColumn.Name;
+    private bool _sortAscending = true;
     private string _folderLabel = "載入中…";
     private string _breadcrumb = "";
     private string _statusText = "就緒";
@@ -63,6 +65,35 @@ public sealed class MainViewModel : INotifyPropertyChanged
             ApplyFilter();
         }
     }
+
+    public FileSortColumn SortColumn
+    {
+        get => _sortColumn;
+        private set
+        {
+            if (_sortColumn == value) return;
+            _sortColumn = value;
+            OnPropertyChanged();
+            NotifySortHeaders();
+        }
+    }
+
+    public bool SortAscending
+    {
+        get => _sortAscending;
+        private set
+        {
+            if (_sortAscending == value) return;
+            _sortAscending = value;
+            OnPropertyChanged();
+            NotifySortHeaders();
+        }
+    }
+
+    public string NameSortHeader => SortHeader("名稱", FileSortColumn.Name);
+    public string SizeSortHeader => SortHeader("大小", FileSortColumn.Size);
+    public string TypeSortHeader => SortHeader("類型", FileSortColumn.Type);
+    public string ModifiedSortHeader => SortHeader("修改日期", FileSortColumn.Modified);
 
     public string FolderLabel { get => _folderLabel; private set { _folderLabel = value; OnPropertyChanged(); } }
     public string Breadcrumb { get => _breadcrumb; private set { _breadcrumb = value; OnPropertyChanged(); } }
@@ -222,14 +253,31 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public void SetCategoryFilter(FileCategory category) => CategoryFilter = category;
 
+    /// <summary>
+    /// Click a column header to sort. Same column toggles direction; other column starts ascending.
+    /// </summary>
+    public void ToggleSort(FileSortColumn column)
+    {
+        if (_sortColumn == column)
+            SortAscending = !_sortAscending;
+        else
+        {
+            SortColumn = column;
+            SortAscending = column is FileSortColumn.Name or FileSortColumn.Type;
+        }
+
+        ApplyFilter(preserveSelection: true);
+    }
+
     public void Refresh()
     {
         if (!string.IsNullOrEmpty(_currentDirectory) && Directory.Exists(_currentDirectory))
             LoadFolder(_currentDirectory);
     }
 
-    private void ApplyFilter()
+    private void ApplyFilter(bool preserveSelection = false)
     {
+        var previousPath = preserveSelection ? SelectedFile?.FullPath : null;
         IEnumerable<FileItem> query = _allFiles;
 
         if (_categoryFilter != FileCategory.All)
@@ -254,11 +302,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 || f.Description.Contains(q, StringComparison.OrdinalIgnoreCase));
         }
 
+        query = ApplySort(query);
         var results = query.ToList();
         Files.Clear();
         foreach (var item in results) Files.Add(item);
 
-        SelectedFile = Files.FirstOrDefault();
+        if (preserveSelection && !string.IsNullOrEmpty(previousPath))
+        {
+            SelectedFile = Files.FirstOrDefault(f =>
+                string.Equals(f.FullPath, previousPath, StringComparison.OrdinalIgnoreCase))
+                ?? Files.FirstOrDefault();
+        }
+        else
+        {
+            SelectedFile = Files.FirstOrDefault();
+        }
+
         OnPropertyChanged(nameof(StatsLine));
         OnPropertyChanged(nameof(FooterCount));
         OnPropertyChanged(nameof(TotalCount));
@@ -266,6 +325,43 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ImageCount));
         OnPropertyChanged(nameof(MediaCount));
         OnPropertyChanged(nameof(ArchiveCount));
+    }
+
+    private IEnumerable<FileItem> ApplySort(IEnumerable<FileItem> query)
+    {
+        // Placeholders (no path) stay at the bottom so empty/error rows don't jump around.
+        IOrderedEnumerable<FileItem> ordered = _sortColumn switch
+        {
+            FileSortColumn.Size => _sortAscending
+                ? query.OrderBy(f => f.FullPath is null).ThenBy(f => f.SizeBytes)
+                : query.OrderBy(f => f.FullPath is null).ThenByDescending(f => f.SizeBytes),
+            FileSortColumn.Type => _sortAscending
+                ? query.OrderBy(f => f.FullPath is null).ThenBy(f => f.Type, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                : query.OrderBy(f => f.FullPath is null).ThenByDescending(f => f.Type, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase),
+            FileSortColumn.Modified => _sortAscending
+                ? query.OrderBy(f => f.FullPath is null).ThenBy(f => f.ModifiedTicks)
+                : query.OrderBy(f => f.FullPath is null).ThenByDescending(f => f.ModifiedTicks),
+            _ => _sortAscending
+                ? query.OrderBy(f => f.FullPath is null).ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                : query.OrderBy(f => f.FullPath is null).ThenByDescending(f => f.Name, StringComparer.OrdinalIgnoreCase)
+        };
+        return ordered;
+    }
+
+    private string SortHeader(string label, FileSortColumn column)
+    {
+        if (_sortColumn != column) return label;
+        return _sortAscending ? $"{label}  ↑" : $"{label}  ↓";
+    }
+
+    private void NotifySortHeaders()
+    {
+        OnPropertyChanged(nameof(NameSortHeader));
+        OnPropertyChanged(nameof(SizeSortHeader));
+        OnPropertyChanged(nameof(TypeSortHeader));
+        OnPropertyChanged(nameof(ModifiedSortHeader));
     }
 
     private void RememberRecent(string path)
@@ -296,6 +392,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
+public enum FileSortColumn
+{
+    Name,
+    Type,
+    Modified,
+    Size
+}
+
 public sealed record FileItem(
     string Name,
     string Type,
@@ -309,7 +413,9 @@ public sealed record FileItem(
     FileCategory Category = FileCategory.Other,
     FontWeight Weight = FontWeight.Normal,
     string? FullPath = null,
-    string? Created = null)
+    string? Created = null,
+    long SizeBytes = 0,
+    long ModifiedTicks = 0)
 {
     public string Detail => string.IsNullOrEmpty(FullPath) ? Description : Path.GetExtension(FullPath).TrimStart('.').ToUpperInvariant();
     public string PreviewBackground => Category switch
@@ -338,7 +444,9 @@ public sealed record FileItem(
             category,
             FontWeight.Normal,
             path,
-            info.CreationTime.ToString("yyyy/MM/dd HH:mm"));
+            info.CreationTime.ToString("yyyy/MM/dd HH:mm"),
+            info.Length,
+            info.LastWriteTime.Ticks);
     }
 
     public static FileItem Placeholder(string name, string type, string description) =>

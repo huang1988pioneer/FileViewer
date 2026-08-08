@@ -6,6 +6,7 @@ namespace FileViewer.Services;
 /// <summary>
 /// Process-wide LibVLC instance. Reuses one MediaPlayer so file switching
 /// does not recreate the native player (reduces crashes on Windows).
+/// Tuned for smooth local mp3/mp4 preview (caching + HW decode when available).
 /// </summary>
 internal static class VlcEngine
 {
@@ -17,6 +18,7 @@ internal static class VlcEngine
     private static Media? _media;
     private static string? _currentPath;
     private static VideoView? _boundView;
+    private static bool? _hwDecodeEnabled;
 
     public static string? InitError
     {
@@ -33,6 +35,19 @@ internal static class VlcEngine
         {
             EnsurePlayer();
             return _player;
+        }
+    }
+
+    /// <summary>Warm native libs off the UI thread so first preview is not hitchy.</summary>
+    public static void WarmUp()
+    {
+        try
+        {
+            EnsurePlayer();
+        }
+        catch
+        {
+            /* ignore — InitError surfaces later in UI */
         }
     }
 
@@ -63,9 +78,9 @@ internal static class VlcEngine
                 }
 
                 _boundView = view;
-                // Setting MediaPlayer triggers LibVLCSharp to push HWND when ready.
-                view.MediaPlayer = null;
-                view.MediaPlayer = _player;
+                // Only re-assign when needed — flipping null/player mid-play can hitch video.
+                if (!ReferenceEquals(view.MediaPlayer, _player))
+                    view.MediaPlayer = _player;
             }
             catch
             {
@@ -110,25 +125,51 @@ internal static class VlcEngine
                 if (!File.Exists(full))
                     return false;
 
+                // Already playing this file — don't stop/restart (avoids stutter on rebind).
+                if (string.Equals(_currentPath, full, StringComparison.OrdinalIgnoreCase)
+                    && _player.State is VLCState.Playing or VLCState.Paused or VLCState.Buffering)
+                {
+                    if (enableVideoOutput && _boundView is not null
+                        && !ReferenceEquals(_boundView.MediaPlayer, _player))
+                    {
+                        try { _boundView.MediaPlayer = _player; } catch { /* ignore */ }
+                    }
+
+                    if (_player.State == VLCState.Paused)
+                        try { _player.SetPause(false); } catch { /* ignore */ }
+                    return true;
+                }
+
                 try { _player.Stop(); } catch { /* ignore */ }
 
-                // Re-bind surface before play so HWND is current.
+                // Re-bind surface before play so HWND is current (no null flip).
                 if (enableVideoOutput && _boundView is not null)
                 {
                     try
                     {
-                        _boundView.MediaPlayer = null;
-                        _boundView.MediaPlayer = _player;
+                        if (!ReferenceEquals(_boundView.MediaPlayer, _player))
+                            _boundView.MediaPlayer = _player;
                     }
                     catch { /* ignore */ }
                 }
 
                 _media?.Dispose();
                 _media = new Media(_lib, full, FromType.FromPath);
-                // Software decode is more stable with Avalonia NativeControlHost.
-                _media.AddOption(":avcodec-hw=none");
-                if (!enableVideoOutput)
+
+                // Local-file caching: fewer underruns on larger mp3/mp4 without huge seek lag.
+                _media.AddOption(":file-caching=800");
+                _media.AddOption(":network-caching=800");
+
+                // Prefer hardware decode when available; fall back is handled by libavcodec.
+                if (enableVideoOutput && _hwDecodeEnabled != false)
+                    _media.AddOption(":avcodec-hw=any");
+                else if (!enableVideoOutput)
                     _media.AddOption(":no-video");
+                else
+                    _media.AddOption(":avcodec-hw=none");
+
+                // Slightly more decode threads for multi-core (0 = auto).
+                _media.AddOption(":avcodec-threads=0");
 
                 _currentPath = full;
                 return _player.Play(_media);
@@ -138,6 +179,19 @@ internal static class VlcEngine
                 return false;
             }
         }
+    }
+
+    /// <summary>
+    /// Retry play with forced software decode (when HW path produces black/failed video).
+    /// </summary>
+    public static bool PlayFileSoftware(string path, bool enableVideoOutput)
+    {
+        _hwDecodeEnabled = false;
+        lock (Gate)
+        {
+            _currentPath = null; // force restart
+        }
+        return PlayFile(path, enableVideoOutput);
     }
 
     public static void Pause(bool pause)
@@ -224,29 +278,18 @@ internal static class VlcEngine
             if (_player is not null) return;
             try
             {
-                _lib = new LibVLC(
-                    "--no-video-title-show",
-                    "--quiet",
-                    "--avcodec-hw=none",
-                    // Prefer a conventional Windows output path for HWND embedding.
-                    "--vout=direct3d11,direct3d9,gl,any");
-                _player = new MediaPlayer(_lib)
-                {
-                    EnableHardwareDecoding = false,
-                    Volume = 90
-                };
+                _lib = CreateLibVlc(preferHw: true);
+                _player = CreatePlayer(_lib, enableHw: true);
+                _hwDecodeEnabled = true;
             }
             catch (Exception ex)
             {
-                // Retry without vout list if options rejected.
+                // Retry with a minimal, software-oriented option set.
                 try
                 {
-                    _lib = new LibVLC("--no-video-title-show", "--quiet", "--avcodec-hw=none");
-                    _player = new MediaPlayer(_lib)
-                    {
-                        EnableHardwareDecoding = false,
-                        Volume = 90
-                    };
+                    _lib = CreateLibVlc(preferHw: false);
+                    _player = CreatePlayer(_lib, enableHw: false);
+                    _hwDecodeEnabled = false;
                 }
                 catch
                 {
@@ -256,5 +299,50 @@ internal static class VlcEngine
                 }
             }
         }
+    }
+
+    private static LibVLC CreateLibVlc(bool preferHw)
+    {
+        // Keep args conservative: invalid options can prevent LibVLC from starting.
+        var args = new List<string>
+        {
+            "--no-video-title-show",
+            "--quiet",
+            "--no-stats",
+            "--no-osd",
+            // Local preview: modest caching smooths IO without making seek feel stuck.
+            "--file-caching=800",
+            "--disc-caching=800",
+            "--network-caching=800",
+            // Prefer dropping late frames over freezing the picture under load.
+            "--drop-late-frames",
+            "--skip-frames",
+        };
+
+        if (preferHw)
+        {
+            args.Add("--avcodec-hw=any");
+            // HWND embedding on Windows is most reliable with D3D/OpenGL chain.
+            args.Add("--vout=direct3d11,direct3d9,gl,any");
+        }
+        else
+        {
+            args.Add("--avcodec-hw=none");
+        }
+
+        return new LibVLC(args.ToArray());
+    }
+
+    private static MediaPlayer CreatePlayer(LibVLC lib, bool enableHw)
+    {
+        var player = new MediaPlayer(lib)
+        {
+            EnableHardwareDecoding = enableHw,
+            Volume = 90,
+            // Match media options; also set on player for modules that read player cache.
+            FileCaching = 800,
+            NetworkCaching = 800
+        };
+        return player;
     }
 }

@@ -14,6 +14,18 @@
     <Style Selector="ListBoxItem"><Setter Property="Padding" Value="8,6"/><Setter Property="CornerRadius" Value="5"/></Style>
     <Style Selector="ListBoxItem:selected"><Setter Property="Background" Value="#E1F0E8"/><Setter Property="Foreground" Value="#173C2B"/></Style>
     <Style Selector="ListBox.filter ListBoxItem:selected"><Setter Property="Background" Value="#D5EBE0"/></Style>
+    <Style Selector="Button.sortHeader">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="Button.sortHeader:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#E2EAE5"/>
+    </Style>
   </Window.Styles>
 
   <Grid RowDefinitions="60,*,28">
@@ -95,10 +107,18 @@
           <Grid RowDefinitions="40,*">
             <Border Background="#EDF2EF" CornerRadius="10,10,0,0" Padding="16,0">
               <Grid ColumnDefinitions="*,110,150,135">
-                <TextBlock Text="名稱" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="1" Text="類型" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="2" Text="修改日期" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="3" Text="大小" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <Button Classes="sortHeader" Content="{Binding NameSortHeader}"
+                        Click="SortName_Click" ToolTip.Tip="依名稱排序（再點一次切換升降序）"
+                        VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Classes="sortHeader" Content="{Binding TypeSortHeader}"
+                        Click="SortType_Click" ToolTip.Tip="依類型排序（再點一次切換升降序）"
+                        VerticalAlignment="Center"/>
+                <Button Grid.Column="2" Classes="sortHeader" Content="{Binding ModifiedSortHeader}"
+                        Click="SortModified_Click" ToolTip.Tip="依修改日期排序（再點一次切換升降序）"
+                        VerticalAlignment="Center"/>
+                <Button Grid.Column="3" Classes="sortHeader" Content="{Binding SizeSortHeader}"
+                        Click="SortSize_Click" ToolTip.Tip="依大小排序（再點一次切換升降序）"
+                        VerticalAlignment="Center"/>
               </Grid>
             </Border>
             <ListBox x:Name="FileList" Grid.Row="1"

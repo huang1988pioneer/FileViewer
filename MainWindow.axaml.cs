@@ -171,6 +171,11 @@ public partial class MainWindow : Window
         RefreshPreview();
     }
 
+    private void SortName_Click(object? sender, RoutedEventArgs e) => _viewModel.ToggleSort(FileSortColumn.Name);
+    private void SortType_Click(object? sender, RoutedEventArgs e) => _viewModel.ToggleSort(FileSortColumn.Type);
+    private void SortModified_Click(object? sender, RoutedEventArgs e) => _viewModel.ToggleSort(FileSortColumn.Modified);
+    private void SortSize_Click(object? sender, RoutedEventArgs e) => _viewModel.ToggleSort(FileSortColumn.Size);
+
     private void Workspace_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (WorkspaceList?.SelectedItem is not ListBoxItem item) return;

@@ -12,6 +12,7 @@ namespace FileViewer.Services;
 /// <summary>
 /// In-app audio/video preview (LibVLC). Shared engine + deferred play until
 /// VideoView native HWND is ready so MP4 shows picture, not audio-only.
+/// Progress UI is throttled so seek-bar updates do not hitch playback.
 /// </summary>
 public sealed class MediaPreviewControl : UserControl, IDisposable
 {
@@ -30,6 +31,7 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
     private bool _started;
     private bool _viewAttached;
     private bool _videoEnabled;
+    private long _lastUiTimeMs = -1;
 
     public MediaPreviewControl(string path, bool isVideo)
     {
@@ -171,7 +173,8 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
             if (_seekSlider is not null) _seekSlider.Value = 0;
             if (_playPauseBtn is not null) _playPauseBtn.Content = "▶";
             SetStatus("已停止");
-            UpdateTimeLabel();
+            _lastUiTimeMs = -1;
+            UpdateTimeLabel(force: true);
         };
 
         _seekSlider = new Slider
@@ -188,6 +191,7 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
             if (_seekSlider is not null)
                 VlcEngine.SeekRatio(_seekSlider.Value / 1000.0);
             _seeking = false;
+            _lastUiTimeMs = -1;
         }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
 
         _timeLabel = new TextBlock
@@ -272,7 +276,11 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
     {
         if (_disposed) return;
 
-        var err = VlcEngine.InitError;
+        // Native init can hitch; do it off the UI thread.
+        string? err = null;
+        await Task.Run(() => err = VlcEngine.InitError).ConfigureAwait(true);
+        if (_disposed) return;
+
         if (err is not null)
         {
             ShowError(err);
@@ -299,22 +307,33 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
 
             // Prefer real video when surface is ready.
             _videoEnabled = _isVideo && _viewAttached && _videoView is not null;
-            var ok = VlcEngine.PlayFile(_path, enableVideoOutput: _videoEnabled);
 
-            // If video play failed, retry once after re-binding HWND.
+            // PlayFile may Stop previous media — run off UI to avoid transport freezes.
+            var path = _path;
+            var video = _videoEnabled;
+            var ok = await Task.Run(() => VlcEngine.PlayFile(path, enableVideoOutput: video)).ConfigureAwait(true);
+
+            // If video play failed, retry once after re-binding HWND (no mid-play restart on success).
             if (!ok && _videoEnabled && _videoView is not null)
             {
-                await Task.Delay(80);
+                await Task.Delay(50);
                 if (_disposed) return;
                 VlcEngine.AttachView(_videoView);
-                ok = VlcEngine.PlayFile(_path, enableVideoOutput: true);
+                ok = await Task.Run(() => VlcEngine.PlayFile(path, enableVideoOutput: true)).ConfigureAwait(true);
+
+                // HWND/HW path still failing: one software-decode attempt.
+                if (!ok)
+                {
+                    ok = await Task.Run(() => VlcEngine.PlayFileSoftware(path, enableVideoOutput: true))
+                        .ConfigureAwait(true);
+                }
             }
 
             // Last resort: audio so the app still previews something.
             if (!ok && _isVideo)
             {
                 _videoEnabled = false;
-                ok = VlcEngine.PlayFile(_path, enableVideoOutput: false);
+                ok = await Task.Run(() => VlcEngine.PlayFile(path, enableVideoOutput: false)).ConfigureAwait(true);
                 SetStatus("影像表面無法輸出，改以音訊播放");
             }
 
@@ -327,15 +346,13 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
             }
 
             if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
-            if (_videoEnabled)
-                SetStatus("播放中");
-            else if (!_isVideo)
+            if (_videoEnabled || !_isVideo)
                 SetStatus("播放中");
 
             // Hide status overlay once video is going so it doesn't cover the picture.
             if (_videoEnabled && _statusLabel is not null)
             {
-                await Task.Delay(600);
+                await Task.Delay(400);
                 if (!_disposed && _videoEnabled)
                     _statusLabel.IsVisible = false;
             }
@@ -357,23 +374,23 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
 
     /// <summary>
     /// Wait for layout + native control, then bind MediaPlayer so HWND is valid before Play.
+    /// Kept short to avoid a sluggish "準備影片…" feel.
     /// </summary>
     private async Task PrepareVideoSurfaceAsync()
     {
         if (_videoView is null || _videoHost is null || _disposed) return;
 
         // Wait for non-zero arrange size (NativeControlHost needs real bounds).
-        for (var i = 0; i < 40 && !_disposed; i++)
+        for (var i = 0; i < 24 && !_disposed; i++)
         {
             if (_videoHost.Bounds.Width > 16 && _videoHost.Bounds.Height > 16
                 && _videoView.Bounds.Width > 16 && _videoView.Bounds.Height > 16)
                 break;
-            await Task.Delay(25);
+            await Task.Delay(16);
         }
 
         if (_disposed) return;
 
-        // Let Avalonia create the platform handle.
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
             if (_disposed || _videoView is null) return;
@@ -388,8 +405,8 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
             }
         });
 
-        // Second bind after native host finishes CreateNativeControlCore.
-        await Task.Delay(120);
+        // Brief yield so CreateNativeControlCore can finish; re-bind only if needed.
+        await Task.Delay(60);
         if (_disposed || _videoView is null) return;
 
         await Dispatcher.UIThread.InvokeAsync(() =>
@@ -405,18 +422,20 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
                 _viewAttached = false;
             }
         });
-
-        await Task.Delay(40);
     }
 
     private void StartTimer()
     {
         _timer?.Stop();
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        // Video needs slightly fresher position UI; audio can be slower (less UI thrash).
+        _timer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(_isVideo ? 400 : 500)
+        };
         _timer.Tick += (_, _) =>
         {
             if (_disposed || _seeking) return;
-            UpdateTimeLabel();
+            UpdateTimeLabel(force: false);
             var p = VlcEngine.Player;
             if (p is null) return;
             if (p.State is VLCState.Ended or VLCState.Stopped or VLCState.Error)
@@ -433,14 +452,25 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         _timer.Start();
     }
 
-    private void UpdateTimeLabel()
+    private void UpdateTimeLabel(bool force)
     {
         var p = VlcEngine.Player;
         if (p is null || _timeLabel is null || _seekSlider is null) return;
         var time = Math.Max(0, p.Time);
         var length = Math.Max(0, p.Length);
+
+        // Skip redundant layout updates (common cause of "janky" preview UI).
+        if (!force && _lastUiTimeMs >= 0 && Math.Abs(time - _lastUiTimeMs) < 350 && length > 0)
+            return;
+        _lastUiTimeMs = time;
+
         if (length > 0)
-            _seekSlider.Value = Math.Clamp(time * 1000.0 / length, 0, 1000);
+        {
+            var next = Math.Clamp(time * 1000.0 / length, 0, 1000);
+            if (force || Math.Abs(_seekSlider.Value - next) >= 1.5)
+                _seekSlider.Value = next;
+        }
+
         _timeLabel.Text = $"{FormatTime(time)} / {FormatTime(length)}";
     }
 
@@ -451,7 +481,6 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
 
         if (p is null || !VlcEngine.IsCurrentPath(_path))
         {
-            _started = false;
             _started = true;
             _ = StartAsync();
             return;
@@ -470,7 +499,8 @@ public sealed class MediaPreviewControl : UserControl, IDisposable
         {
             if (_videoView is not null && _isVideo)
                 VlcEngine.AttachView(_videoView);
-            VlcEngine.PlayFile(_path, enableVideoOutput: _isVideo && _viewAttached);
+            _ = Task.Run(() =>
+                VlcEngine.PlayFile(_path, enableVideoOutput: _isVideo && _viewAttached));
             _videoEnabled = _isVideo && _viewAttached;
             if (_playPauseBtn is not null) _playPauseBtn.Content = "❚❚";
             SetStatus("播放中");
